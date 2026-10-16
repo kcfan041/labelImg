@@ -977,7 +977,12 @@ class MainWindow(QMainWindow, WindowMixin):
             return
         # setCurrentItem also clears the old selection and moves keyboard focus row
         self.file_list_widget.setCurrentItem(item)
-        self.file_list_widget.scrollToItem(item, QAbstractItemView.EnsureVisible)
+        # Keep 2 rows of context: scrolling starts when the current row reaches the third from
+        # the bottom (or top), so the next images are always in view
+        count = self.file_list_widget.count()
+        for neighbour in (min(index + 2, count - 1), max(index - 2, 0), index):
+            self.file_list_widget.scrollToItem(self.file_list_widget.item(neighbour),
+                                               QAbstractItemView.EnsureVisible)
 
     def clear_filters(self):
         self._rebuild_blocked = True

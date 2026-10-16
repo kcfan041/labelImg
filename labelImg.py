@@ -251,7 +251,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.filter_conf_value.setRange(0.0, 1.0)
         self.filter_conf_value.setSingleStep(0.05)
         self.filter_conf_value.setDecimals(2)
-        self.filter_conf_value.setValue(0.50)
+        self.filter_conf_value.setValue(0.90)
         self.filter_conf_check.stateChanged.connect(lambda _: self.rebuild_file_list())
         self.filter_conf_value.valueChanged.connect(lambda _: self.rebuild_file_list())
         grid.addWidget(self.filter_conf_check, 3, 0, 1, 2)

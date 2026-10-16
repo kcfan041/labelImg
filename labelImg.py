@@ -153,8 +153,22 @@ class MainWindow(QMainWindow, WindowMixin):
         self.edit_button = QToolButton()
         self.edit_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
+        # Quick on/off for what's drawn on the image (boxes, and the class text above them)
+        self.show_boxes_checkbox = QCheckBox(get_str('showBoxes'))
+        self.show_boxes_checkbox.setChecked(True)
+        self.show_boxes_checkbox.toggled.connect(self.toggle_show_boxes)
+        self.show_label_text_checkbox = QCheckBox(get_str('displayLabel'))
+        display_toggles = QHBoxLayout()
+        display_toggles.setContentsMargins(0, 0, 0, 0)
+        display_toggles.addWidget(self.show_boxes_checkbox)
+        display_toggles.addWidget(self.show_label_text_checkbox)
+        display_toggles.addStretch()
+        display_toggles_container = QWidget()
+        display_toggles_container.setLayout(display_toggles)
+
         # Add some of widgets to list_layout
         list_layout.addWidget(self.edit_button)
+        list_layout.addWidget(display_toggles_container)
         list_layout.addWidget(self.diffc_button)
         list_layout.addWidget(use_default_label_container)
 
@@ -492,6 +506,9 @@ class MainWindow(QMainWindow, WindowMixin):
         self.display_label_option.setCheckable(True)
         self.display_label_option.setChecked(settings.get(SETTING_PAINT_LABEL, False))
         self.display_label_option.triggered.connect(self.toggle_paint_labels_option)
+        # Right-panel checkbox mirrors the View menu item
+        self.show_label_text_checkbox.setChecked(self.display_label_option.isChecked())
+        self.show_label_text_checkbox.toggled.connect(self.set_paint_labels)
 
         add_actions(self.menus.file,
                     (open, open_dir, change_save_dir, open_annotation, copy_prev_bounding, self.menus.recentFiles, save, save_format, save_as, close, reset_all, delete_image, quit))
@@ -2140,8 +2157,24 @@ class MainWindow(QMainWindow, WindowMixin):
             self.save_file()
 
     def toggle_paint_labels_option(self):
+        checked = self.display_label_option.isChecked()
         for shape in self.canvas.shapes:
-            shape.paint_label = self.display_label_option.isChecked()
+            shape.paint_label = checked
+        self.show_label_text_checkbox.blockSignals(True)
+        self.show_label_text_checkbox.setChecked(checked)
+        self.show_label_text_checkbox.blockSignals(False)
+        self.canvas.update()
+
+    def set_paint_labels(self, checked):
+        self.display_label_option.setChecked(checked)
+        self.toggle_paint_labels_option()
+
+    def toggle_show_boxes(self, checked):
+        """Hide / show every box on the image without touching the per-box checkboxes."""
+        self.canvas.show_shapes = checked
+        if not checked:
+            self.canvas.de_select_shape()
+        self.canvas.update()
 
     def toggle_draw_square(self):
         self.canvas.set_drawing_shape_to_square(self.draw_squares_option.isChecked())

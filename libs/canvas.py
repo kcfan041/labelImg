@@ -52,6 +52,7 @@ class Canvas(QWidget):
         self.label_font_size = 8
         self.pixmap = QPixmap()
         self.visible = {}
+        self.show_shapes = True  # global on/off for drawing boxes (per-box visibility is kept)
         self._hide_background = False
         self.hide_background = False
         self.h_shape = None
@@ -83,7 +84,7 @@ class Canvas(QWidget):
         self.restore_cursor()
 
     def isVisible(self, shape):
-        return self.visible.get(shape, True)
+        return self.show_shapes and self.visible.get(shape, True)
 
     def drawing(self):
         return self.mode == self.CREATE

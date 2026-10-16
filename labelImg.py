@@ -1517,7 +1517,10 @@ class MainWindow(QMainWindow, WindowMixin):
         if dir_path is not None and len(dir_path) > 1:
             self.default_save_dir = dir_path
 
-        self.show_bounding_box_from_annotation_file(self.file_path)
+        # Reload the current image so its old shapes are cleared before reading from the new dir.
+        # With unsaved edits, keep them on screen instead so they can be saved into the new dir.
+        if self.file_path and not self.dirty:
+            self.load_file(self.file_path)
         if self.m_img_full_list:
             self._build_label_cache()
             self.rebuild_file_list()
@@ -1604,9 +1607,9 @@ class MainWindow(QMainWindow, WindowMixin):
         self.default_label = self.label_hist[0] if self.label_hist else ''
 
         self.last_open_dir = target_dir_path
+        # default_save_dir is already set, so load_file() inside import_dir_images() reads the
+        # first image's annotations; loading them again here would duplicate the label list
         self.import_dir_images(import_path)
-        if self.file_path:
-            self.show_bounding_box_from_annotation_file(file_path=self.file_path)
 
     def import_dir_images(self, dir_path):
         if not self.may_continue() or not dir_path:

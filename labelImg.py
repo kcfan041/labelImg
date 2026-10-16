@@ -219,7 +219,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.filter_name_edit = QLineEdit()
         self.filter_name_edit.setPlaceholderText('filename contains…')
         self.filter_name_edit.setClearButtonEnabled(True)
-        self.filter_name_edit.textChanged.connect(lambda _: self.rebuild_file_list())
+        self.filter_name_edit.textChanged.connect(lambda _: self.apply_filter_change())
         grid.addWidget(QLabel('Name:'), 0, 0)
         grid.addWidget(self.filter_name_edit, 0, 1, 1, 3)
 
@@ -239,8 +239,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.filter_count_max = QSpinBox()
         self.filter_count_max.setRange(0, 9999)
         self.filter_count_max.setValue(9999)
-        self.filter_count_min.valueChanged.connect(lambda _: self.rebuild_file_list())
-        self.filter_count_max.valueChanged.connect(lambda _: self.rebuild_file_list())
+        self.filter_count_min.valueChanged.connect(lambda _: self.apply_filter_change())
+        self.filter_count_max.valueChanged.connect(lambda _: self.apply_filter_change())
         grid.addWidget(QLabel('Count:'), 2, 0)
         grid.addWidget(self.filter_count_min, 2, 1)
         grid.addWidget(QLabel('—'), 2, 2)
@@ -252,8 +252,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.filter_conf_value.setSingleStep(0.05)
         self.filter_conf_value.setDecimals(2)
         self.filter_conf_value.setValue(0.90)
-        self.filter_conf_check.stateChanged.connect(lambda _: self.rebuild_file_list())
-        self.filter_conf_value.valueChanged.connect(lambda _: self.rebuild_file_list())
+        self.filter_conf_check.stateChanged.connect(lambda _: self.apply_filter_change())
+        self.filter_conf_value.valueChanged.connect(lambda _: self.apply_filter_change())
         grid.addWidget(self.filter_conf_check, 3, 0, 1, 2)
         grid.addWidget(self.filter_conf_value, 3, 2, 1, 2)
 
@@ -946,7 +946,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def _on_class_filter_changed(self, _checked=False):
         self._update_class_button_label()
-        self.rebuild_file_list()
+        self.apply_filter_change()
 
     def _passes_filter(self, image_path):
         name_q = self.filter_name_edit.text().strip().lower()
@@ -982,6 +982,52 @@ class MainWindow(QMainWindow, WindowMixin):
         else:
             self.cur_img_idx = 0
 
+    def _nearest_in_filter(self, image_path, direction=1):
+        """Closest image passing the filter, by position in the unfiltered list.
+        direction=1: first match after image_path, else the last one before it.
+        direction=-1: last match before image_path only."""
+        if not self.m_img_list:
+            return None
+        if image_path not in self.m_img_full_list:
+            return self.m_img_list[0] if direction > 0 else None
+        pos = self.m_img_full_list.index(image_path)
+        allowed = set(self.m_img_list)
+        after = [p for p in self.m_img_full_list[pos + 1:] if p in allowed]
+        before = [p for p in self.m_img_full_list[:pos] if p in allowed]
+        if direction > 0:
+            return after[0] if after else (before[-1] if before else None)
+        return before[-1] if before else None
+
+    def apply_filter_change(self):
+        """Rebuild the list after a filter change; if the current image dropped out of it,
+        move to the nearest matching image (the next one, else the previous one)."""
+        if self._rebuild_blocked:
+            return
+        self.rebuild_file_list()
+        current = self.file_path
+        if current is None:
+            if self.m_img_list:
+                self.cur_img_idx = 0
+                self.load_file(self.m_img_list[0])
+            return
+        if current in self.m_img_list:
+            return
+        if not self.m_img_list:
+            self.statusBar().showMessage('No images match the filter')
+            return
+        # Unsaved edits first: autosave, or ask (Cancel keeps this image)
+        if self.dirty:
+            if self.auto_saving.isChecked() and self.default_save_dir is not None:
+                self.save_file()  # also rebuilds the list; the edit may make this image match
+                if self.file_path in self.m_img_list:
+                    return
+            elif not self.may_continue():
+                return
+        target = self._nearest_in_filter(current, 1)
+        if target:
+            self.cur_img_idx = self.m_img_list.index(target)
+            self.load_file(target)
+
     def select_file_item(self, index):
         """Highlight the current image in the file list and scroll it into view."""
         item = self.file_list_widget.item(index)
@@ -1008,7 +1054,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self._update_class_button_label()
         finally:
             self._rebuild_blocked = False
-        self.rebuild_file_list()
+        self.apply_filter_change()
 
     # Add chris
     def button_state(self, item=None):
@@ -1395,6 +1441,9 @@ class MainWindow(QMainWindow, WindowMixin):
             if unicode_file_path in self.m_img_list:
                 index = self.m_img_list.index(unicode_file_path)
                 self.select_file_item(index)
+            elif unicode_file_path in self.m_img_full_list:
+                # In the folder but hidden by the filter: keep the list, just select nothing
+                self.file_list_widget.setCurrentItem(None)
             else:
                 self.file_list_widget.clear()
                 self.m_img_list.clear()
@@ -1939,6 +1988,14 @@ class MainWindow(QMainWindow, WindowMixin):
         if self.file_path is None:
             return
 
+        if self.file_path not in self.m_img_list:
+            # Current image left the filtered list (e.g. fixed and saved): go to the previous match
+            target = self._nearest_in_filter(self.file_path, -1)
+            if target:
+                self.cur_img_idx = self.m_img_list.index(target)
+                self.load_file(target)
+            return
+
         if self.cur_img_idx - 1 >= 0:
             self.cur_img_idx -= 1
             filename = self.m_img_list[self.cur_img_idx]
@@ -1967,6 +2024,13 @@ class MainWindow(QMainWindow, WindowMixin):
         if self.file_path is None:
             filename = self.m_img_list[0]
             self.cur_img_idx = 0
+        elif self.file_path not in self.m_img_list:
+            # Current image left the filtered list: go to the next match after it (only forward)
+            pos = self.m_img_full_list.index(self.file_path) if self.file_path in self.m_img_full_list else -1
+            allowed = set(self.m_img_list)
+            filename = next((p for p in self.m_img_full_list[pos + 1:] if p in allowed), None)
+            if filename:
+                self.cur_img_idx = self.m_img_list.index(filename)
         else:
             if self.cur_img_idx + 1 < self.img_count:
                 self.cur_img_idx += 1

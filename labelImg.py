@@ -72,6 +72,9 @@ class WindowMixin(object):
         return toolbar
 
 
+ALL_CLASSES_ITEM = 'All classes'
+
+
 class MainWindow(QMainWindow, WindowMixin):
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = list(range(3))
 
@@ -135,21 +138,20 @@ class MainWindow(QMainWindow, WindowMixin):
         list_layout = QVBoxLayout()
         list_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Create a widget for using default label
+        # Use default label: new boxes get the chosen class without the label dialog
         self.use_default_label_checkbox = QCheckBox(get_str('useDefaultLabel'))
         self.use_default_label_checkbox.setChecked(False)
+        self.use_default_label_checkbox.setToolTip('New boxes get this class directly, without asking')
         self.default_label_combo_box = DefaultLabelComboBox(self,items=self.label_hist)
+        self.default_label_combo_box.layout().setContentsMargins(0, 0, 0, 0)
+        self.default_label_combo_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
-        use_default_label_qhbox_layout = QHBoxLayout()
-        use_default_label_qhbox_layout.addWidget(self.use_default_label_checkbox)
-        use_default_label_qhbox_layout.addWidget(self.default_label_combo_box)
-        use_default_label_container = QWidget()
-        use_default_label_container.setLayout(use_default_label_qhbox_layout)
-
-        # Create a widget for edit and diffc button
+        # Difficult flag: only Pascal VOC stores it (YOLO drops it), so it's hidden from the panel.
+        # The widget is kept because loading / drawing shapes still reads and resets it.
         self.diffc_button = QCheckBox(get_str('useDifficult'))
         self.diffc_button.setChecked(False)
         self.diffc_button.stateChanged.connect(self.button_state)
+        self.diffc_button.setVisible(False)
         self.edit_button = QToolButton()
         self.edit_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
@@ -158,23 +160,33 @@ class MainWindow(QMainWindow, WindowMixin):
         self.show_boxes_checkbox.setChecked(True)
         self.show_boxes_checkbox.toggled.connect(self.toggle_show_boxes)
         self.show_label_text_checkbox = QCheckBox(get_str('displayLabel'))
-        display_toggles = QHBoxLayout()
-        display_toggles.setContentsMargins(0, 0, 0, 0)
-        display_toggles.addWidget(self.show_boxes_checkbox)
-        display_toggles.addWidget(self.show_label_text_checkbox)
-        display_toggles.addStretch()
-        display_toggles_container = QWidget()
-        display_toggles_container.setLayout(display_toggles)
 
-        # Add some of widgets to list_layout
-        list_layout.addWidget(self.edit_button)
-        list_layout.addWidget(display_toggles_container)
-        list_layout.addWidget(self.diffc_button)
-        list_layout.addWidget(use_default_label_container)
-
-        # Create and add combobox for showing unique labels in group
+        # Show only the boxes of one class on this image
         self.combo_box = ComboBox(self)
-        list_layout.addWidget(self.combo_box)
+        self.combo_box.layout().setContentsMargins(0, 0, 0, 0)
+        self.combo_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.combo_box.setToolTip('Show only the boxes of one class on this image')
+
+        # Compact form: one row per setting, with a caption on the left
+        panel = QWidget()
+        form = QGridLayout(panel)
+        form.setContentsMargins(4, 2, 4, 2)
+        form.setHorizontalSpacing(6)
+        form.setVerticalSpacing(2)
+        form.addWidget(QLabel('Show:'), 0, 0)
+        form.addWidget(self.show_boxes_checkbox, 0, 1)
+        form.addWidget(self.show_label_text_checkbox, 0, 2)
+        form.addWidget(QLabel('New box:'), 1, 0)
+        form.addWidget(self.use_default_label_checkbox, 1, 1)
+        form.addWidget(self.default_label_combo_box, 1, 2)
+        form.addWidget(QLabel('Filter:'), 2, 0)
+        form.addWidget(self.combo_box, 2, 1, 1, 2)
+        form.addWidget(self.diffc_button, 3, 0, 1, 3)
+        form.setColumnStretch(2, 1)
+
+        list_layout.setSpacing(2)
+        list_layout.addWidget(self.edit_button)
+        list_layout.addWidget(panel)
 
         # Create and add a widget for showing current label items
         self.label_list = QListWidget()
@@ -1103,10 +1115,8 @@ class MainWindow(QMainWindow, WindowMixin):
         items_text_list = [str(self.items_to_shapes[self.label_list.item(i)].label)
                            for i in range(self.label_list.count())]
 
-        unique_text_list = list(set(items_text_list))
-        # Add a null row for showing all the labels
-        unique_text_list.append("")
-        unique_text_list.sort()
+        # First row shows all the labels (see combo_selection_changed)
+        unique_text_list = [ALL_CLASSES_ITEM] + sorted(set(items_text_list))
 
         self.combo_box.update_items(unique_text_list)
 
@@ -1165,7 +1175,7 @@ class MainWindow(QMainWindow, WindowMixin):
     def combo_selection_changed(self, index):
         text = self.combo_box.cb.itemText(index)
         for i in range(self.label_list.count()):
-            if text == "":
+            if index <= 0:  # 'All classes' row (or the box being cleared)
                 self.label_list.item(i).setCheckState(2)
             elif text != self.items_to_shapes[self.label_list.item(i)].label:
                 self.label_list.item(i).setCheckState(0)

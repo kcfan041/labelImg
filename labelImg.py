@@ -278,6 +278,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas = Canvas(parent=self)
         self.canvas.zoomRequest.connect(self.zoom_request)
         self.canvas.zoomAtRequest.connect(self.zoom_at)
+        self.canvas.panRequest.connect(self.pan_request)
+        self._zoom_exact = None  # unrounded zoom %, see zoom_at
         self.canvas.lightRequest.connect(self.light_request)
         self.canvas.set_drawing_shape_to_square(settings.get(SETTING_DRAW_SQUARE, False))
 
@@ -289,6 +291,7 @@ class MainWindow(QMainWindow, WindowMixin):
             Qt.Horizontal: scroll.horizontalScrollBar()
         }
         self.scroll_area = scroll
+        scroll.installEventFilter(self)
         self.canvas.scrollRequest.connect(self.scroll_request)
 
         self.canvas.newShape.connect(self.new_shape)
@@ -1375,11 +1378,21 @@ class MainWindow(QMainWindow, WindowMixin):
         view_x, view_y = pos.x() - h_bar.value(), pos.y() - v_bar.value()
 
         current = self.zoom_widget.value()
-        target = int(round(current * factor))
-        if target == current:  # small pinch steps would otherwise round away
-            target = current + (1 if factor > 1 else -1 if factor < 1 else 0)
-        target = max(self.zoom_widget.minimum(), min(self.zoom_widget.maximum(), target))
+        lo, hi = self.zoom_widget.minimum(), self.zoom_widget.maximum()
+        # Smooth scrolling / pinch send many tiny steps: accumulate them in a float so they add
+        # up to the same zoom as whole wheel notches instead of rounding away (or to 1% each)
+        if self._zoom_exact is None or int(round(self._zoom_exact)) != current:
+            self._zoom_exact = float(current)
+        self._zoom_exact = max(lo, min(hi, self._zoom_exact * factor))
+        target = int(round(self._zoom_exact))
         if target == current:
+            return
+        if target <= lo and lo < 100:
+            # Zoomed all the way out = whole image in view: back to Fit Window, which also
+            # keeps fitting when the window is resized
+            self._zoom_exact = None
+            self.actions.fitWindow.setChecked(True)
+            self.set_fit_window(True)
             return
         self.set_zoom(target)
 
@@ -1392,6 +1405,37 @@ class MainWindow(QMainWindow, WindowMixin):
         new_pos = (image_point + self.canvas.offset_to_center()) * self.canvas.scale
         h_bar.setValue(int(round(new_pos.x() - view_x)))
         v_bar.setValue(int(round(new_pos.y() - view_y)))
+
+    def pan_request(self, dx, dy):
+        """Drag panning: the image follows the mouse 1:1."""
+        h_bar = self.scroll_bars[Qt.Horizontal]
+        v_bar = self.scroll_bars[Qt.Vertical]
+        h_bar.setValue(h_bar.value() - dx)
+        v_bar.setValue(v_bar.value() - dy)
+
+    def update_min_zoom(self):
+        """Smallest zoom = the whole image in view (Fit Window), but never above 100% so small
+        images can still be seen at their real size."""
+        if self.canvas.pixmap.isNull() or self.canvas.pixmap.width() == 0:
+            self.zoom_widget.setMinimum(1)
+            return
+        lowest = max(1, min(100, int(100 * self.scale_fit_window())))
+        if lowest == self.zoom_widget.minimum():
+            return
+        if self.zoom_widget.value() < lowest and self.zoom_mode == self.MANUAL_ZOOM:
+            # e.g. window made bigger while zoomed out: snap to fitting the whole image
+            self.zoom_mode = self.FIT_WINDOW
+            self.actions.fitWindow.setChecked(True)
+        self.zoom_widget.setMinimum(lowest)  # also raises the current value if it was below
+
+    def eventFilter(self, obj, event):
+        # The image area also changes size when the side docks are resized, not just the window
+        if obj is self.scroll_area and event.type() == QEvent.Resize:
+            if not self.image.isNull():
+                self.update_min_zoom()
+                if self.zoom_mode != self.MANUAL_ZOOM:
+                    self.adjust_scale()  # refit with the new size (MainWindow.resizeEvent runs too early)
+        return super(MainWindow, self).eventFilter(obj, event)
 
     def light_request(self, delta):
         self.add_light(5*delta // (8 * 15))
@@ -1490,6 +1534,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 self.load_labels(self.label_file.shapes)
             self.set_clean()
             self.canvas.setEnabled(True)
+            self.update_min_zoom()
             self.adjust_scale(initial=True)
             self.paint_canvas()
             self.add_recent_file(self.file_path)

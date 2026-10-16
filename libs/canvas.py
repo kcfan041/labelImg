@@ -25,6 +25,8 @@ class Canvas(QWidget):
     zoomRequest = pyqtSignal(int)
     # Zoom by a factor keeping the image point under pos (canvas widget coordinates) in place
     zoomAtRequest = pyqtSignal(float, QPointF)
+    # Drag-to-pan: move the view by (dx, dy) screen pixels (the image follows the mouse)
+    panRequest = pyqtSignal(int, int)
     lightRequest = pyqtSignal(int)
     scrollRequest = pyqtSignal(int, int)
     newShape = pyqtSignal()
@@ -69,8 +71,11 @@ class Canvas(QWidget):
         self.verified = False
         self.draw_square = False
 
-        # initialisation for panning
-        self.pan_initial_pos = QPoint()
+        # Drag panning: middle button anywhere, Option + left button anywhere, or left button
+        # on empty space in edit mode. Tracked in global coordinates since the canvas itself
+        # moves under the mouse while the view scrolls.
+        self._panning = False
+        self._pan_last = QPoint()
 
     def set_drawing_color(self, qcolor):
         self.drawing_line_color = qcolor
@@ -120,8 +125,25 @@ class Canvas(QWidget):
     def selected_vertex(self):
         return self.h_vertex is not None
 
+    def start_pan(self, ev):
+        self._panning = True
+        self._pan_last = ev.globalPos()
+        self.override_cursor(CURSOR_MOVE)
+
+    def end_pan(self):
+        self._panning = False
+        self.override_cursor(CURSOR_DRAW if self.drawing() else CURSOR_DEFAULT)
+
     def mouseMoveEvent(self, ev):
         """Update line with last point and current coordinates."""
+        if self._panning:
+            g = ev.globalPos()
+            d = g - self._pan_last
+            self._pan_last = g
+            if d.x() or d.y():
+                self.panRequest.emit(d.x(), d.y())
+            return
+
         pos = self.transform_pos(ev.pos())
 
         # Update coordinates in status bar if image is opened
@@ -214,12 +236,6 @@ class Canvas(QWidget):
                 current_height = abs(point1.y() - point3.y())
                 self.parent().window().label_coordinates.setText(
                         'Width: %d, Height: %d / X: %d; Y: %d' % (current_width, current_height, pos.x(), pos.y()))
-            else:
-                # pan
-                delta = ev.pos() - self.pan_initial_pos
-                self.scrollRequest.emit(delta.x(), Qt.Horizontal)
-                self.scrollRequest.emit(delta.y(), Qt.Vertical)
-                self.update()
             return
 
         # Just hovering over the canvas, 2 possibilities:
@@ -270,7 +286,10 @@ class Canvas(QWidget):
     def mousePressEvent(self, ev):
         pos = self.transform_pos(ev.pos())
 
-        if ev.button() == Qt.LeftButton:
+        if ev.button() == Qt.MiddleButton or (
+                ev.button() == Qt.LeftButton and int(ev.modifiers()) & int(Qt.AltModifier)):
+            self.start_pan(ev)
+        elif ev.button() == Qt.LeftButton:
             if self.drawing():
                 self.handle_drawing(pos)
             else:
@@ -278,9 +297,7 @@ class Canvas(QWidget):
                 self.prev_point = pos
 
                 if selection is None:
-                    # pan
-                    QApplication.setOverrideCursor(QCursor(Qt.OpenHandCursor))
-                    self.pan_initial_pos = ev.pos()
+                    self.start_pan(ev)
 
         elif ev.button() == Qt.RightButton and self.editing():
             self.select_shape_point(pos)
@@ -288,6 +305,9 @@ class Canvas(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, ev):
+        if self._panning and ev.button() in (Qt.LeftButton, Qt.MiddleButton):
+            self.end_pan()
+            return
         if ev.button() == Qt.RightButton:
             menu = self.menus[bool(self.selected_shape_copy)]
             self.restore_cursor()
@@ -305,9 +325,6 @@ class Canvas(QWidget):
             pos = self.transform_pos(ev.pos())
             if self.drawing():
                 self.handle_drawing(pos)
-            else:
-                # pan
-                QApplication.restoreOverrideCursor()
 
     def end_move(self, copy=False):
         assert self.selected_shape and self.selected_shape_copy
@@ -629,20 +646,16 @@ class Canvas(QWidget):
             v_delta = delta.y()
 
         mods = ev.modifiers()
-        # A mouse wheel sends notches without pixel deltas or a scroll phase; a trackpad
-        # two-finger swipe has them and keeps panning the image
-        mouse_wheel = qt_version == 5 and ev.pixelDelta().isNull() and ev.phase() == Qt.NoScrollPhase
         if int(Qt.ControlModifier) | int(Qt.ShiftModifier) == int(mods) and v_delta:
             self.lightRequest.emit(v_delta)
-        elif v_delta and qt_version == 5 and (Qt.ControlModifier == int(mods) or
-                                              (mouse_wheel and int(mods) == int(Qt.NoModifier))):
-            # Zoom around the cursor: one wheel notch (120) = 10%
+        elif v_delta and qt_version == 5:
+            # The wheel always zooms around the cursor (mouse, smooth-scrolling mouse, trackpad);
+            # panning is done by dragging. 120 units (one notch) = 10%; smooth scrolling sends
+            # many small deltas that add up to the same amount.
             self.zoomAtRequest.emit(1.1 ** (v_delta / 120.0), QPointF(ev.pos()))
-        elif Qt.ControlModifier == int(mods) and v_delta:
+        elif v_delta:
             self.zoomRequest.emit(v_delta)
-        else:
-            v_delta and self.scrollRequest.emit(v_delta, Qt.Vertical)
-            h_delta and self.scrollRequest.emit(h_delta, Qt.Horizontal)
+        # Horizontal wheel / swipe does nothing
         ev.accept()
 
     def keyPressEvent(self, ev):

@@ -23,6 +23,8 @@ CURSOR_GRAB = Qt.OpenHandCursor
 
 class Canvas(QWidget):
     zoomRequest = pyqtSignal(int)
+    # Zoom by a factor keeping the image point under pos (canvas widget coordinates) in place
+    zoomAtRequest = pyqtSignal(float, QPointF)
     lightRequest = pyqtSignal(int)
     scrollRequest = pyqtSignal(int, int)
     newShape = pyqtSignal()
@@ -85,6 +87,15 @@ class Canvas(QWidget):
 
     def isVisible(self, shape):
         return self.show_shapes and self.visible.get(shape, True)
+
+    def event(self, ev):
+        # macOS trackpad pinch
+        if ev.type() == QEvent.NativeGesture and ev.gestureType() == Qt.ZoomNativeGesture:
+            pos = self.mapFromGlobal(ev.globalPos())
+            self.zoomAtRequest.emit(1.0 + ev.value(), QPointF(pos))
+            ev.accept()
+            return True
+        return super(Canvas, self).event(ev)
 
     def drawing(self):
         return self.mode == self.CREATE
@@ -618,8 +629,15 @@ class Canvas(QWidget):
             v_delta = delta.y()
 
         mods = ev.modifiers()
+        # A mouse wheel sends notches without pixel deltas or a scroll phase; a trackpad
+        # two-finger swipe has them and keeps panning the image
+        mouse_wheel = qt_version == 5 and ev.pixelDelta().isNull() and ev.phase() == Qt.NoScrollPhase
         if int(Qt.ControlModifier) | int(Qt.ShiftModifier) == int(mods) and v_delta:
             self.lightRequest.emit(v_delta)
+        elif v_delta and qt_version == 5 and (Qt.ControlModifier == int(mods) or
+                                              (mouse_wheel and int(mods) == int(Qt.NoModifier))):
+            # Zoom around the cursor: one wheel notch (120) = 10%
+            self.zoomAtRequest.emit(1.1 ** (v_delta / 120.0), QPointF(ev.pos()))
         elif Qt.ControlModifier == int(mods) and v_delta:
             self.zoomRequest.emit(v_delta)
         else:

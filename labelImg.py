@@ -265,6 +265,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.canvas = Canvas(parent=self)
         self.canvas.zoomRequest.connect(self.zoom_request)
+        self.canvas.zoomAtRequest.connect(self.zoom_at)
         self.canvas.lightRequest.connect(self.light_request)
         self.canvas.set_drawing_shape_to_square(settings.get(SETTING_DRAW_SQUARE, False))
 
@@ -1300,6 +1301,36 @@ class MainWindow(QMainWindow, WindowMixin):
 
         h_bar.setValue(new_h_bar_value)
         v_bar.setValue(new_v_bar_value)
+
+    def zoom_at(self, factor, pos):
+        """Zoom by factor, keeping the image point under pos (canvas coordinates) under the cursor."""
+        if self.image.isNull():
+            return
+        old_scale = self.canvas.scale
+        image_point = self.canvas.transform_pos(pos)
+        h_bar = self.scroll_bars[Qt.Horizontal]
+        v_bar = self.scroll_bars[Qt.Vertical]
+        # Cursor position inside the visible viewport (canvas is shifted by the scroll values)
+        view_x, view_y = pos.x() - h_bar.value(), pos.y() - v_bar.value()
+
+        current = self.zoom_widget.value()
+        target = int(round(current * factor))
+        if target == current:  # small pinch steps would otherwise round away
+            target = current + (1 if factor > 1 else -1 if factor < 1 else 0)
+        target = max(self.zoom_widget.minimum(), min(self.zoom_widget.maximum(), target))
+        if target == current:
+            return
+        self.set_zoom(target)
+
+        if self.canvas.scale == old_scale:
+            return
+        # Let the scroll area apply the new canvas size first (scroll bar ranges, and the viewport
+        # shrinking when a scroll bar appears); otherwise the values below get clamped
+        QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
+        # Where the same image point is on the resized canvas, then scroll it back under the cursor
+        new_pos = (image_point + self.canvas.offset_to_center()) * self.canvas.scale
+        h_bar.setValue(int(round(new_pos.x() - view_x)))
+        v_bar.setValue(int(round(new_pos.y() - view_y)))
 
     def light_request(self, delta):
         self.add_light(5*delta // (8 * 15))

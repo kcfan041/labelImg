@@ -51,7 +51,7 @@ Python 3 + Qt5
     sudo pip3 install -r requirements/requirements-linux-python3.txt
     make qt5py3
     python3 labelImg.py
-    python3 labelImg.py [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    python3 labelImg.py [IMAGE_PATH] [SAVE_DIR]
 
 macOS
 ^^^^^
@@ -69,7 +69,7 @@ Python 3 + Qt5
 
     make qt5py3
     python3 labelImg.py
-    python3 labelImg.py [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    python3 labelImg.py [IMAGE_PATH] [SAVE_DIR]
 
 
 Python 3 Virtualenv (推薦方法)
@@ -101,7 +101,7 @@ Windows
     For pyqt5, pyrcc5 -o libs/resources.py resources.qrc
 
     python labelImg.py
-    python labelImg.py [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    python labelImg.py [IMAGE_PATH] [SAVE_DIR]
 
 Windows + Anaconda
 ^^^^^^^^^^^^^^^^^^
@@ -116,7 +116,7 @@ Windows + Anaconda
     conda install -c anaconda lxml
     pyrcc5 -o libs/resources.py resources.qrc
     python labelImg.py
-    python labelImg.py [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    python labelImg.py [IMAGE_PATH] [SAVE_DIR]
 
 Get from PyPI but only python3.0 or above
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -125,7 +125,7 @@ Get from PyPI but only python3.0 or above
 
     pip3 install labelImg
     labelImg
-    labelImg [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    labelImg [IMAGE_PATH] [SAVE_DIR]
 
 
 Use Docker
@@ -152,11 +152,10 @@ Use Docker
 使用方法
 -----
 
-你可以先產生標籤
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+類別清單
+~~~~~~~~
 
-修改這個檔案
-`data/predefined\_classes.txt <https://github.com/tzutalin/labelImg/blob/master/data/predefined_classes.txt>`__
+使用所開啟資料集根目錄的 ``classes.txt``。若不存在，Open Dir 時會詢問要從其他資料集複製、選擇檔案或從空白開始。
 
 快捷鍵
 ~~~~~~~

@@ -109,6 +109,7 @@ class LabelFile(object):
             writer.add_bnd_box(bnd_box[0], bnd_box[1], bnd_box[2], bnd_box[3], label, difficult,
                                shape.get('confidence'))
 
+        # classes_file=False: class names unknown, write only the label file
         writer.save(target_file=filename, class_list=class_list, classes_file=classes_file)
         return
 

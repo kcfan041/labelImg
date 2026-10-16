@@ -36,6 +36,7 @@ from libs.canvas import Canvas
 from libs.zoomWidget import ZoomWidget
 from libs.lightWidget import LightWidget
 from libs.labelDialog import LabelDialog
+from libs.classesDialog import ClassesDialog, MODE_EMPTY, read_classes_file, write_classes_file, count_label_files
 from libs.colorDialog import ColorDialog
 from libs.labelFile import LabelFile, LabelFileError, LabelFileFormat
 from libs.toolBar import ToolBar
@@ -74,7 +75,7 @@ class WindowMixin(object):
 class MainWindow(QMainWindow, WindowMixin):
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = list(range(3))
 
-    def __init__(self, default_filename=None, default_prefdef_class_file=None, default_save_dir=None):
+    def __init__(self, default_filename=None, default_save_dir=None):
         super(MainWindow, self).__init__()
         self.setWindowTitle(__appname__)
 
@@ -116,14 +117,13 @@ class MainWindow(QMainWindow, WindowMixin):
         self._beginner = True
         self.screencast = "https://youtu.be/p0nR2YsCY_U"
 
-        # Load predefined classes to the list
-        self.predefined_classes_file = default_prefdef_class_file
-        self.load_predefined_classes(default_prefdef_class_file)
-
-        if self.label_hist:
-            self.default_label = self.label_hist[0]
-        else:
-            print("Not find:/data/predefined_classes.txt (optional)")
+        # The class list comes from the opened dataset's classes.txt (asked for when it's missing);
+        # there is no built-in default list
+        self.default_label = ''
+        self.classes_file_path = None
+        # False when a dataset has labels but no classes.txt: ids are shown and saved as plain numbers
+        self.classes_known = True
+        self._current_classes = None  # dataset whose class list is in use, for the status bar
 
         # Main widgets and related state.
         self.label_dialog = LabelDialog(parent=self, list_item=self.label_hist)
@@ -601,6 +601,10 @@ class MainWindow(QMainWindow, WindowMixin):
         # Display cursor coordinates at the right of status bar
         self.label_coordinates = QLabel('')
         self.statusBar().addPermanentWidget(self.label_coordinates)
+        # Which classes.txt is in use, always visible
+        self.classes_status_label = QLabel('')
+        self.statusBar().addPermanentWidget(self.classes_status_label)
+        self.update_classes_status()
 
         # Open Dir if default file
         if self.file_path and os.path.isdir(self.file_path):
@@ -827,7 +831,7 @@ class MainWindow(QMainWindow, WindowMixin):
         shape = self.items_to_shapes[item]
         # Edit only the class name; the list text may also carry the confidence ('AS 0.87')
         text = self.label_dialog.pop_up(shape.label)
-        if text is not None:
+        if text is not None and self.check_label_allowed(text):
             shape.label = text
             shape.line_color = generate_color_by_text(text)
             item.setText(shape.display_text())
@@ -1102,7 +1106,8 @@ class MainWindow(QMainWindow, WindowMixin):
                     annotation_file_path += TXT_EXT
                 self.label_file.save_yolo_format(annotation_file_path, shapes, self.file_path, self.image_data, self.label_hist,
                                                  self.line_color.getRgb(), self.fill_color.getRgb(),
-                                                 classes_file=getattr(self, 'classes_file_path', None))
+                                                 # Unknown class names: keep ids, don't invent a classes.txt
+                                                 classes_file=self.classes_file_path if self.classes_known else False)
             elif self.label_file_format == LabelFileFormat.CREATE_ML:
                 if annotation_file_path[-5:].lower() != ".json":
                     annotation_file_path += JSON_EXT
@@ -1178,6 +1183,9 @@ class MainWindow(QMainWindow, WindowMixin):
                 self.lastLabel = text
         else:
             text = self.default_label
+
+        if text is not None and not self.check_label_allowed(text):
+            text = None
 
         # Add Chris
         self.diffc_button.setChecked(False)
@@ -1387,15 +1395,6 @@ class MainWindow(QMainWindow, WindowMixin):
         return '[{} / {}]'.format(self.cur_img_idx + 1, self.img_count)
 
     @staticmethod
-    def read_classes_file(path):
-        """Class names from a classes.txt, one per line, indexed the same way YoloReader does."""
-        if not path or not os.path.isfile(path):
-            return None
-        with codecs.open(path, 'r', 'utf8') as f:
-            content = f.read().strip('\n')
-        return [line.strip() for line in content.split('\n')] if content else []
-
-    @staticmethod
     def find_sub_datasets(root):
         """Direct sub-folders of root laid out as <name>/images (+ labels/, classes.txt)."""
         datasets = []
@@ -1407,11 +1406,13 @@ class MainWindow(QMainWindow, WindowMixin):
             sub = os.path.join(root, name)
             images = os.path.join(sub, 'images')
             if not name.startswith('.') and os.path.isdir(images):
-                datasets.append({'root': os.path.abspath(sub),
+                datasets.append({'name': name,
+                                 'root': os.path.abspath(sub),
                                  'images': os.path.abspath(images),
                                  'labels': os.path.abspath(os.path.join(sub, 'labels')),
                                  'classes_file': os.path.abspath(os.path.join(sub, 'classes.txt')),
-                                 'classes': None})
+                                 'classes': None,
+                                 'classes_known': True})
         return datasets
 
     def dataset_for(self, image_path):
@@ -1438,8 +1439,14 @@ class MainWindow(QMainWindow, WindowMixin):
             return
         self._active_dataset = dataset
         # Shared list object: classes added while labelling go straight into this dataset's list
-        self.label_hist = dataset['classes']
+        self.set_class_list(dataset, dataset['classes'], dataset['classes_known'])
+
+    def set_class_list(self, dataset, classes, known):
+        """Use this dataset's class list for reading, saving, the label dialog and the status bar."""
+        self.label_hist = classes
         self.classes_file_path = dataset['classes_file']
+        self.classes_known = known
+        self._current_classes = dataset
         self.default_label_combo_box.cb.blockSignals(True)
         self.default_label_combo_box.cb.clear()
         self.default_label_combo_box.cb.addItems(self.label_hist)
@@ -1449,6 +1456,30 @@ class MainWindow(QMainWindow, WindowMixin):
         else:
             self.default_label_combo_box.cb.setCurrentIndex(self.label_hist.index(self.default_label))
         self.label_dialog = LabelDialog(parent=self, list_item=self.label_hist)
+        self.update_classes_status()
+
+    def check_label_allowed(self, text):
+        """Without classes.txt, ids are kept as numbers; a new class name would get an id that may
+        already be used by existing labels, so only numeric ids are accepted then."""
+        if self.classes_known or text.isdigit():
+            return True
+        self.error_message(u'No classes.txt',
+                           u'%s has labels but no classes.txt, so class ids are kept as numbers.<br>'
+                           u'Enter a class id (e.g. 0, 1, 2), or reopen the folder and choose a classes.txt.'
+                           % (self._current_classes or {}).get('name', 'This dataset'))
+        return False
+
+    def update_classes_status(self):
+        dataset = self._current_classes
+        if dataset is None:
+            text = 'Classes: none (open a dataset)'
+        elif not dataset['classes_known']:
+            text = 'Classes: %s has no classes.txt, ids shown as numbers' % dataset['name']
+        elif os.path.isfile(dataset['classes_file']):
+            text = 'Classes: %s/classes.txt (%d)' % (dataset['name'], len(self.label_hist))
+        else:
+            text = 'Classes: %s, new list (%d), classes.txt written on first save' % (dataset['name'], len(self.label_hist))
+        self.classes_status_label.setText(text)
 
     def annotation_stem(self, image_path):
         """Annotation path (without extension) for an image under default_save_dir.
@@ -1609,7 +1640,12 @@ class MainWindow(QMainWindow, WindowMixin):
                 # classes.txt then goes next to the saved label files as usual
                 self.sub_datasets = []
                 self._active_dataset = None
-                self.classes_file_path = None
+                # Keep the current dataset's class list, but write classes.txt next to the labels
+                if self._current_classes is not None:
+                    self._current_classes = dict(self._current_classes, classes_file=os.path.join(
+                        dir_path, 'classes.txt'))
+                    self.classes_file_path = self._current_classes['classes_file']
+                    self.update_classes_status()
 
         # Reload the current image so its old shapes are cleared before reading from the new dir.
         # With unsaved edits, keep them on screen instead so they can be saved into the new dir.
@@ -1672,63 +1708,97 @@ class MainWindow(QMainWindow, WindowMixin):
             return
 
         # Leave any previous multi-dataset session
-        self.sub_datasets = []
-        self.multi_root = None
-        self._active_dataset = None
-
         # Folder of datasets: target/<name>/{images,labels,classes.txt}
         if not os.path.isdir(os.path.join(target_dir_path, 'images')):
             datasets = self.find_sub_datasets(target_dir_path)
             if datasets:
+                if not self.resolve_classes(datasets, target_dir_path):
+                    return  # cancelled: keep whatever was open before
+                self._reset_multi_dataset()
                 self.open_multi_dataset_dir(target_dir_path, datasets)
                 return
 
-        # Support dataset layout: dataset_dir/{images,labels,classes.txt}
-        images_subdir = os.path.join(target_dir_path, 'images')
-        labels_subdir = os.path.join(target_dir_path, 'labels')
-        classes_file = os.path.join(target_dir_path, 'classes.txt')
-
+        # Support dataset layout: dataset_dir/{images,labels,classes.txt}; otherwise labels sit next to images
+        root = os.path.abspath(target_dir_path)
+        images_subdir = os.path.join(root, 'images')
         if os.path.isdir(images_subdir):
             import_path = images_subdir
-            self.default_save_dir = labels_subdir
-            os.makedirs(labels_subdir, exist_ok=True)
-            legacy_classes_file = os.path.join(labels_subdir, 'classes.txt')
+            labels_dir = os.path.join(root, 'labels')
         else:
-            import_path = target_dir_path
-            self.default_save_dir = target_dir_path
-            legacy_classes_file = None
-        # Always target the dataset root, even before classes.txt exists, so saves don't create labels/classes.txt
-        self.classes_file_path = classes_file
-
-        # Seed the class list from the existing classes.txt so YOLO saves keep its order;
-        # starting from an empty list would rewrite classes.txt and shift other files' class ids.
-        # Priority: dataset classes.txt > old labels/classes.txt > data/predefined_classes.txt
-        self.label_hist = []
-        for path in (classes_file, legacy_classes_file, self.predefined_classes_file):
-            if path and os.path.isfile(path):
-                self.load_predefined_classes(path)
-                break
-        self.default_label_combo_box.cb.clear()
-        self.default_label_combo_box.cb.addItems(self.label_hist)
-        self.default_label = self.label_hist[0] if self.label_hist else ''
+            import_path = root
+            labels_dir = root
+        # classes.txt always lives at the dataset root, so saves don't create labels/classes.txt
+        dataset = {'name': os.path.basename(root) or root, 'root': root, 'images': import_path,
+                   'labels': labels_dir, 'classes_file': os.path.join(root, 'classes.txt'),
+                   'classes': None, 'classes_known': True}
+        if not self.resolve_classes([dataset], target_dir_path):
+            return
+        self._reset_multi_dataset()
+        os.makedirs(labels_dir, exist_ok=True)
+        self.default_save_dir = labels_dir
+        self.set_class_list(dataset, dataset['classes'], dataset['classes_known'])
 
         self.last_open_dir = target_dir_path
         # default_save_dir is already set, so load_file() inside import_dir_images() reads the
         # first image's annotations; loading them again here would duplicate the label list
         self.import_dir_images(import_path)
 
+    def _reset_multi_dataset(self):
+        self.sub_datasets = []
+        self.multi_root = None
+        self._active_dataset = None
+
+    def resolve_classes(self, datasets, start_dir):
+        """Fill each dataset's 'classes' from its classes.txt, asking the user when it's missing.
+
+        Returns False if the user cancels. Never falls back to a built-in list: YOLO files only store
+        class ids, so guessing the list would silently relabel boxes.
+        """
+        missing = []
+        for dataset in datasets:
+            # Older datasets kept classes.txt inside labels/
+            classes = read_classes_file(dataset['classes_file'])
+            if classes is None:
+                classes = read_classes_file(os.path.join(dataset['labels'], 'classes.txt'))
+            dataset['classes'] = classes
+            dataset['classes_known'] = True
+            if classes is None:
+                missing.append(dataset)
+        if not missing:
+            return True
+
+        sources = [{'name': d['name'], 'classes': d['classes']} for d in datasets if d['classes']]
+        info = [{'name': d['name'], 'label_count': count_label_files(d['labels']) if os.path.isdir(d['labels']) else 0}
+                for d in missing]
+        choice = ClassesDialog(info, sources, start_dir=start_dir, parent=self).get_choice()
+        if choice is None:
+            return False
+        mode, classes = choice
+        labelled = [i for i in info if i['label_count']]
+        if mode == MODE_EMPTY and labelled:
+            answer = QMessageBox.warning(
+                self, 'No classes.txt',
+                'Already labelled: %s.\n\nWithout a classes.txt their classes are shown as numbers '
+                '(0, 1, 2 ...) and saved with the same ids. No classes.txt will be written for them.\n\n'
+                'Continue?' % ', '.join('%s (%d files)' % (i['name'], i['label_count']) for i in labelled),
+                QMessageBox.Ok | QMessageBox.Cancel, QMessageBox.Cancel)
+            if answer != QMessageBox.Ok:
+                return False
+        for dataset, dataset_info in zip(missing, info):
+            if mode == MODE_EMPTY:
+                dataset['classes'] = []
+                # Existing labels can't be mapped to names: keep their ids as plain numbers and
+                # don't create a classes.txt that would claim a meaning for them
+                dataset['classes_known'] = dataset_info['label_count'] == 0
+            else:
+                dataset['classes'] = list(classes)
+                write_classes_file(dataset['classes_file'], dataset['classes'])
+        return True
+
     def open_multi_dataset_dir(self, root, datasets):
         """Open every <root>/<name>/images as one list; each dataset keeps its own labels/ and classes.txt."""
         for dataset in datasets:
             os.makedirs(dataset['labels'], exist_ok=True)
-            # Same priority as a single dataset: classes.txt > labels/classes.txt > predefined classes
-            classes = None
-            for path in (dataset['classes_file'], os.path.join(dataset['labels'], 'classes.txt'),
-                         self.predefined_classes_file):
-                classes = self.read_classes_file(path)
-                if classes is not None:
-                    break
-            dataset['classes'] = classes if classes is not None else []
 
         self.sub_datasets = datasets
         self.multi_root = os.path.abspath(root)
@@ -1887,6 +1957,7 @@ class MainWindow(QMainWindow, WindowMixin):
     def _save_file(self, annotation_file_path):
         if annotation_file_path and self.save_labels(annotation_file_path):
             self.set_clean()
+            self.update_classes_status()  # classes.txt may have just been created / grown
             self.statusBar().showMessage('Saved to  %s' % annotation_file_path)
             self.statusBar().show()
             if self.file_path and self.file_path in self.m_img_cache:
@@ -2009,16 +2080,6 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.end_move(copy=False)
         self.set_dirty()
 
-    def load_predefined_classes(self, predef_classes_file):
-        if os.path.exists(predef_classes_file) is True:
-            with codecs.open(predef_classes_file, 'r', 'utf8') as f:
-                for line in f:
-                    line = line.strip()
-                    if self.label_hist is None:
-                        self.label_hist = [line]
-                    else:
-                        self.label_hist.append(line)
-
     def load_pascal_xml_by_filename(self, xml_path):
         if self.file_path is None:
             return
@@ -2039,10 +2100,13 @@ class MainWindow(QMainWindow, WindowMixin):
             return
 
         self.set_format(FORMAT_YOLO)
-        class_list_path = getattr(self, 'classes_file_path', None)
-        if class_list_path and not os.path.isfile(class_list_path):
-            class_list_path = None  # fall back to classes.txt next to the label file
-        t_yolo_parse_reader = YoloReader(txt_path, self.image, class_list_path)
+        if self._current_classes is not None:
+            # The open dataset's class list (from its classes.txt or the user's choice); [] = unknown
+            t_yolo_parse_reader = YoloReader(txt_path, self.image, self.classes_file_path,
+                                             classes=self.label_hist if self.classes_known else [])
+        else:
+            # Single file opened without a dataset: classes.txt next to the label file
+            t_yolo_parse_reader = YoloReader(txt_path, self.image)
         shapes = t_yolo_parse_reader.get_shapes()
         self.load_labels(shapes)
         self.canvas.verified = t_yolo_parse_reader.verified
@@ -2097,22 +2161,17 @@ def get_main_app(argv=None):
     app = QApplication(argv)
     app.setApplicationName(__appname__)
     app.setWindowIcon(new_icon("app"))
-    # Tzutalin 201705+: Accept extra agruments to change predefined class file
+    # Classes come from each dataset's classes.txt (asked for on Open Dir when missing)
     argparser = argparse.ArgumentParser()
     argparser.add_argument("image_dir", nargs="?")
-    argparser.add_argument("class_file",
-                           default=os.path.join(os.path.dirname(__file__), "data", "predefined_classes.txt"),
-                           nargs="?")
     argparser.add_argument("save_dir", nargs="?")
     args = argparser.parse_args(argv[1:])
 
     args.image_dir = args.image_dir and os.path.normpath(args.image_dir)
-    args.class_file = args.class_file and os.path.normpath(args.class_file)
     args.save_dir = args.save_dir and os.path.normpath(args.save_dir)
 
-    # Usage : labelImg.py image classFile saveDir
+    # Usage : labelImg.py [image_or_dir] [save_dir]
     win = MainWindow(args.image_dir,
-                     args.class_file,
                      args.save_dir)
     # Keep single-key shortcuts working under Chinese (Zhuyin / Pinyin ...) input methods
     # and holding a / d keep stepping through images at a steady pace

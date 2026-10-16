@@ -40,14 +40,20 @@ class YOLOWriter:
 
         # PR387
         box_name = box['name']
-        if box_name not in class_list:
+        if box_name in class_list:
+            class_index = class_list.index(box_name)
+        elif box_name.isdigit():
+            # A bare class id the class list has no name for (e.g. no classes.txt):
+            # keep the original id instead of appending it and re-indexing the box
+            class_index = int(box_name)
+        else:
             class_list.append(box_name)
-
-        class_index = class_list.index(box_name)
+            class_index = class_list.index(box_name)
 
         return class_index, x_center, y_center, w, h
 
     def save(self, class_list=[], target_file=None, classes_file=None):
+        """classes_file=False writes only the label file (class names unknown, ids kept as is)."""
 
         if target_file is None:
             target_file = self.filename + TXT_EXT
@@ -67,6 +73,8 @@ class YOLOWriter:
 
         with codecs.open(target_file, 'w', encoding=ENCODE_METHOD) as out_file:
             out_file.writelines(box_lines)
+        if classes_file is False:
+            return
         with codecs.open(classes_file, 'w', encoding=ENCODE_METHOD) as out_class_file:
             for c in class_list:
                 out_class_file.write(c + '\n')
@@ -75,7 +83,7 @@ class YOLOWriter:
 
 class YoloReader:
 
-    def __init__(self, file_path, image, class_list_path=None):
+    def __init__(self, file_path, image, class_list_path=None, classes=None):
         # shapes type:
         # [labbel, [(x1,y1), (x2,y2), (x3,y3), (x4,y4)], color, color, difficult]
         self.shapes = []
@@ -87,11 +95,12 @@ class YoloReader:
         else:
             self.class_list_path = class_list_path
 
-        # print (file_path, self.class_list_path)
-
         # Without classes.txt the labels fall back to their numeric class ids (see yolo_line_to_shape)
         self.classes = []
-        if os.path.isfile(self.class_list_path):
+        if classes is not None:
+            # Class list given by the caller (the dataset's list already in use; [] = names unknown)
+            self.classes = list(classes)
+        elif os.path.isfile(self.class_list_path):
             with codecs.open(self.class_list_path, 'r', encoding=ENCODE_METHOD) as classes_file:
                 self.classes = classes_file.read().strip('\n').split('\n')
 

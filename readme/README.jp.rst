@@ -52,7 +52,7 @@ Python 3とQt5を使う場合
     sudo pip3 install -r requirements/requirements-linux-python3.txt
     make qt5py3
     python3 labelImg.py
-    python3 labelImg.py [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    python3 labelImg.py [IMAGE_PATH] [SAVE_DIR]
 
 macOSの場合
 ^^^^^^^^^^^
@@ -70,7 +70,7 @@ Python 3とQt5を使う場合
 
     make qt5py3
     python3 labelImg.py
-    python3 labelImg.py [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    python3 labelImg.py [IMAGE_PATH] [SAVE_DIR]
 
 
 Python 3 Virtualenv (推奨)
@@ -105,7 +105,7 @@ Windowsの場合
     （pyqt5の場合は、 pyrcc5 -o libs/resources.py resources.qrc）
 
     python labelImg.py
-    python labelImg.py [画像パス] [定義済みクラスファイル]
+    python labelImg.py [画像パス] [保存先フォルダ]
 
 Windows + Anaconda
 ^^^^^^^^^^^^^^^^^^
@@ -120,7 +120,7 @@ Anaconda Promptを起動し `labelImg <#labelimg>`__ インストールされて
     conda install -c anaconda lxml
     pyrcc5 -o libs/resources.py resources.qrc
     python labelImg.py
-    python labelImg.py [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    python labelImg.py [IMAGE_PATH] [SAVE_DIR]
 
 PyPIから入手する（Python 3以降のみ）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -130,7 +130,7 @@ PyPIから入手する（Python 3以降のみ）
 
     pip3 install labelImg
     labelImg
-    labelImg [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    labelImg [IMAGE_PATH] [SAVE_DIR]
 
 Dockerの場合
 ~~~~~~~~~~~~~~~~~
@@ -154,11 +154,10 @@ Dockerの場合
 を見るだけです。
 
 
-定義済みクラスを作成するには？
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+クラス一覧
+~~~~~~~~~~
 
-`data/predefined\_classes.txt <https://github.com/tzutalin/labelImg/blob/master/data/predefined_classes.txt>`__
-を編集してください。
+開いたデータセットの ``classes.txt`` を使います。無い場合は Open Dir 時に選択を求められます。
 
 ショートカット一覧
 ~~~~~~~~~~~~~~~~~~

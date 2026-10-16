@@ -53,7 +53,7 @@ This is the simplest (one-command) install method on modern Linux distributions 
 
     pip3 install labelImg
     labelImg
-    labelImg [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    labelImg [IMAGE_PATH] [SAVE_DIR]
 
 
 Build from source
@@ -76,7 +76,7 @@ Python 3 + Qt5
     sudo pip3 install -r requirements/requirements-linux-python3.txt
     make qt5py3
     python3 labelImg.py
-    python3 labelImg.py [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    python3 labelImg.py [IMAGE_PATH] [SAVE_DIR]
 
 macOS
 ^^^^^
@@ -94,7 +94,7 @@ Python 3 + Qt5
 
     make qt5py3
     python3 labelImg.py
-    python3 labelImg.py [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    python3 labelImg.py [IMAGE_PATH] [SAVE_DIR]
 
 
 Python 3 Virtualenv (Recommended)
@@ -128,7 +128,7 @@ Open cmd and go to the `labelImg <#labelimg>`__ directory
     For pyqt5, pyrcc5 -o libs/resources.py resources.qrc
 
     python labelImg.py
-    python labelImg.py [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    python labelImg.py [IMAGE_PATH] [SAVE_DIR]
 
 If you want to package it into a separate EXE file
 
@@ -152,7 +152,7 @@ Open the Anaconda Prompt and go to the `labelImg <#labelimg>`__ directory
     conda install -c anaconda lxml
     pyrcc5 -o libs/resources.py resources.qrc
     python labelImg.py
-    python labelImg.py [IMAGE_PATH] [PRE-DEFINED CLASS FILE]
+    python labelImg.py [IMAGE_PATH] [SAVE_DIR]
 
 Use Docker
 ~~~~~~~~~~~~~~~~~
@@ -196,7 +196,7 @@ You can refer to the below hotkeys to speed up your workflow.
 Steps (YOLO)
 ~~~~~~~~~~~~
 
-1. In ``data/predefined_classes.txt`` define the list of classes that will be used for your training.
+1. Put a ``classes.txt`` (one class name per line, in id order) at the root of your dataset folder. If it is missing, Open Dir asks you to copy one from another dataset, pick a file, or start with an empty list.
 
 2. Build and launch using the instructions above.
 
@@ -214,12 +214,11 @@ Note:
 
 - When saving as YOLO format, "difficult" flag is discarded.
 
-Create pre-defined classes
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+Class list
+~~~~~~~~~~
 
-You can edit the
-`data/predefined\_classes.txt <https://github.com/tzutalin/labelImg/blob/master/data/predefined_classes.txt>`__
-to load pre-defined classes
+The class list is the ``classes.txt`` of the opened dataset; there is no built-in default.
+The status bar shows which ``classes.txt`` is in use.
 
 Annotation visualization
 ~~~~~~~~~~~~~~~~~~~~~~~~

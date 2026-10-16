@@ -50,6 +50,7 @@ from libs.create_ml_io import JSON_EXT
 from libs.ustr import ustr
 from libs.hashableQListWidgetItem import HashableQListWidgetItem
 from libs.physical_shortcuts import PhysicalKeyShortcuts
+from libs.shortcutsDialog import ShortcutsDialog, normalize as normalize_key
 
 __appname__ = 'labelImg'
 
@@ -544,8 +545,58 @@ class MainWindow(QMainWindow, WindowMixin):
         self.show_label_text_checkbox.setChecked(self.display_label_option.isChecked())
         self.show_label_text_checkbox.toggled.connect(self.set_paint_labels)
 
+        # Keyboard shortcut editor. Ids are stable so saved settings survive text changes;
+        # actions sharing an id (the beginner / advanced 'w') always get the same keys.
+        edit_shortcuts = action('Keyboard Shortcuts…', self.edit_shortcuts, 'Ctrl+,', 'help',
+                                'Change the keyboard shortcuts')
+        edit_shortcuts.setMenuRole(QAction.NoRole)  # stay in the menu on macOS
+        self.shortcut_entries = [
+            ('next_image', 'Next image', [open_next_image]),
+            ('prev_image', 'Previous image', [open_prev_image]),
+            ('create_box', 'Create box', [create, create_mode]),
+            ('edit_mode', 'Edit mode (advanced)', [edit_mode]),
+            ('delete_box', 'Delete box', [delete]),
+            ('copy_box', 'Duplicate box', [copy]),
+            ('edit_label', 'Edit label (dialog)', [edit]),
+            ('undo', 'Undo', [undo]),
+            ('redo', 'Redo', [redo]),
+            ('verify', 'Verify image', [verify]),
+            ('save', 'Save', [save]),
+            ('save_as', 'Save as', [save_as]),
+            ('save_format', 'Change save format', [save_format]),
+            ('open', 'Open file', [open]),
+            ('open_dir', 'Open dir', [open_dir]),
+            ('change_save_dir', 'Change save dir', [change_save_dir]),
+            ('open_annotation', 'Open annotation', [open_annotation]),
+            ('copy_prev', 'Copy previous bounding boxes', [copy_prev_bounding]),
+            ('close', 'Close image', [close]),
+            ('delete_image', 'Delete image', [delete_image]),
+            ('quit', 'Quit', [quit]),
+            ('box_line_color', 'Box line color', [color1]),
+            ('draw_squares', 'Draw squares', [self.draw_squares_option]),
+            ('advanced_mode', 'Advanced mode', [advanced_mode]),
+            ('auto_save', 'Auto save mode', [self.auto_saving]),
+            ('single_class', 'Single class mode', [self.single_class_mode]),
+            ('display_labels', 'Display labels', [self.display_label_option]),
+            ('toggle_panel', 'Show / hide Box Labels panel', [labels]),
+            ('hide_all', 'Hide all boxes', [hide_all]),
+            ('show_all', 'Show all boxes', [show_all]),
+            ('zoom_in', 'Zoom in', [zoom_in]),
+            ('zoom_out', 'Zoom out', [zoom_out]),
+            ('zoom_org', 'Original size', [zoom_org]),
+            ('fit_window', 'Fit window', [fit_window]),
+            ('fit_width', 'Fit width', [fit_width]),
+            ('light_brighten', 'Brighten', [light_brighten]),
+            ('light_darken', 'Darken', [light_darken]),
+            ('light_org', 'Original brightness', [light_org]),
+            ('shortcuts', 'Keyboard shortcuts', [edit_shortcuts]),
+        ]
+        self.default_shortcuts = dict(
+            (eid, [normalize_key(k) for k in acts[0].shortcuts()]) for eid, _name, acts in self.shortcut_entries)
+        self.apply_shortcuts(settings.get(SETTING_SHORTCUTS, {}))
+
         add_actions(self.menus.file,
-                    (open, open_dir, change_save_dir, open_annotation, copy_prev_bounding, self.menus.recentFiles, save, save_format, save_as, close, reset_all, delete_image, quit))
+                    (open, open_dir, change_save_dir, open_annotation, copy_prev_bounding, self.menus.recentFiles, save, save_format, save_as, close, reset_all, delete_image, None, edit_shortcuts, quit))
         add_actions(self.menus.help, (help_default, show_info, show_shortcut))
         add_actions(self.menus.view, (
             self.auto_saving,
@@ -955,6 +1006,26 @@ class MainWindow(QMainWindow, WindowMixin):
         from libs.__init__ import __version__
         msg = u'Name:{0} \nApp Version:{1} \n{2} '.format(__appname__, __version__, sys.version_info)
         QMessageBox.information(self, u'Information', msg)
+
+    def apply_shortcuts(self, custom):
+        """Set every action's keys: the default unless changed in the shortcut editor."""
+        self.custom_shortcuts = dict((eid, list(keys)) for eid, keys in custom.items()
+                                     if eid in self.default_shortcuts)
+        for eid, _name, acts in self.shortcut_entries:
+            keys = self.custom_shortcuts.get(eid, self.default_shortcuts[eid])
+            for a in acts:
+                a.setShortcuts([QKeySequence(k) for k in keys])
+
+    def edit_shortcuts(self, _value=False):
+        entries = [(eid, name, self.default_shortcuts[eid]) for eid, name, _acts in self.shortcut_entries]
+        current = dict((eid, self.custom_shortcuts.get(eid, self.default_shortcuts[eid]))
+                       for eid, _name, _acts in self.shortcut_entries)
+        dialog = ShortcutsDialog(entries, current, parent=self)
+        if dialog.exec_():
+            self.apply_shortcuts(dialog.result_keys())
+            self.settings[SETTING_SHORTCUTS] = self.custom_shortcuts
+            self.settings.save()
+            self.status('Keyboard shortcuts updated')
 
     def show_shortcuts_dialog(self):
         self.show_tutorial_dialog(browser='default', link='https://github.com/tzutalin/labelImg#Hotkeys')

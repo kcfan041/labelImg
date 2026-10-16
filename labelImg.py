@@ -50,6 +50,7 @@ from libs.create_ml_io import JSON_EXT
 from libs.ustr import ustr
 from libs.hashableQListWidgetItem import HashableQListWidgetItem
 from libs.physical_shortcuts import PhysicalKeyShortcuts
+from libs.stayOpenMenu import StayOpenMenu
 from libs.shortcutsDialog import ShortcutsDialog, normalize as normalize_key
 
 __appname__ = 'labelImg'
@@ -234,7 +235,8 @@ class MainWindow(QMainWindow, WindowMixin):
         grid.addWidget(QLabel('Name:'), 0, 0)
         grid.addWidget(self.filter_name_edit, 0, 1, 1, 3)
 
-        self.filter_class_menu = QMenu(self)
+        # Stays open while ticking classes; closes on a click outside / Esc
+        self.filter_class_menu = StayOpenMenu(self)
         self.filter_class_button = QToolButton()
         self.filter_class_button.setText('All classes')
         self.filter_class_button.setPopupMode(QToolButton.InstantPopup)
@@ -1223,12 +1225,20 @@ class MainWindow(QMainWindow, WindowMixin):
         self.m_img_cache = {p: self._scan_label_file(p) for p in self.m_img_full_list}
         self._refresh_filter_class_menu()
 
+    def filter_class_actions(self):
+        """The checkable class items of the Class filter menu (not All / None)."""
+        return [a for a in self.filter_class_menu.actions() if a.isCheckable()]
+
     def _refresh_filter_class_menu(self):
-        prev_checked = {a.text() for a in self.filter_class_menu.actions() if a.isChecked()}
+        prev_checked = {a.text() for a in self.filter_class_actions() if a.isChecked()}
         classes = set()
         for stats in self.m_img_cache.values():
             classes |= stats['classes']
         self.filter_class_menu.clear()
+        if classes:
+            self.filter_class_menu.addAction('All', partial(self._set_all_class_filters, True))
+            self.filter_class_menu.addAction('None', partial(self._set_all_class_filters, False))
+            self.filter_class_menu.addSeparator()
         for cls in sorted(classes):
             act = self.filter_class_menu.addAction(cls)
             act.setCheckable(True)
@@ -1237,8 +1247,18 @@ class MainWindow(QMainWindow, WindowMixin):
             act.toggled.connect(self._on_class_filter_changed)
         self._update_class_button_label()
 
+    def _set_all_class_filters(self, checked):
+        """Tick / untick every class at once, filtering only once."""
+        self._rebuild_blocked = True
+        try:
+            for act in self.filter_class_actions():
+                act.setChecked(checked)
+        finally:
+            self._rebuild_blocked = False
+        self._on_class_filter_changed()
+
     def _update_class_button_label(self):
-        n = sum(1 for a in self.filter_class_menu.actions() if a.isChecked())
+        n = sum(1 for a in self.filter_class_actions() if a.isChecked())
         self.filter_class_button.setText('All classes' if n == 0 else '%d class%s' % (n, '' if n == 1 else 'es'))
 
     def _on_class_filter_changed(self, _checked=False):
@@ -1252,7 +1272,7 @@ class MainWindow(QMainWindow, WindowMixin):
         stats = self.m_img_cache.get(image_path, {'classes': set(), 'count': 0, 'min_conf': None})
         if stats['count'] < self.filter_count_min.value() or stats['count'] > self.filter_count_max.value():
             return False
-        selected = {a.text() for a in self.filter_class_menu.actions() if a.isChecked()}
+        selected = {a.text() for a in self.filter_class_actions() if a.isChecked()}
         if selected and not (selected & stats['classes']):
             return False
         if self.filter_conf_check.isChecked():
@@ -1346,7 +1366,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.filter_count_min.setValue(0)
             self.filter_count_max.setValue(9999)
             self.filter_conf_check.setChecked(False)
-            for act in self.filter_class_menu.actions():
+            for act in self.filter_class_actions():
                 act.setChecked(False)
             self._update_class_button_label()
         finally:

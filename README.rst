@@ -1,316 +1,153 @@
-.. image:: /readme/images/labelimg.png
-        :target: https://github.com/heartexlabs/label-studio
+LabelImg（IKG 客製版）
+======================
 
-Label Studio is a modern, multi-modal data annotation tool
-=======
+這是 `labelImg <https://github.com/HumanSignal/labelImg>`__ 的客製版，用來檢查和修正 YOLO 格式的標註，例如模型預測出來、帶有信心值的框。
 
-LabelImg, the popular image annotation tool created by Tzutalin with the help of dozens contributors, is no longer actively being developed and has become part of the Label Studio community. Check out `Label Studio <https://github.com/heartexlabs/label-studio>`__, the most flexible open source data labeling tool for images, text, hypertext, audio, video and time-series data. `Install <https://labelstud.io/guide/install.html>`__ Label Studio and join the `slack community <https://label-studio.slack.com/>`__ to get started.
+原版的 Pascal VOC / CreateML 讀寫功能還在，但主要是為 YOLO 調整的。
 
-.. image:: /readme/images/label-studio-1-6-player-screenshot.png
-        :target: https://github.com/heartexlabs/label-studio
+安裝與執行
+----------
 
-About LabelImg
-========
-
-.. image:: https://img.shields.io/pypi/v/labelimg.svg
-        :target: https://pypi.python.org/pypi/labelimg
-
-.. image:: https://img.shields.io/github/workflow/status/tzutalin/labelImg/Package?style=for-the-badge
-        :alt: GitHub Workflow Status
-
-.. image:: https://img.shields.io/badge/lang-en-blue.svg
-        :target: https://github.com/tzutalin/labelImg
-
-.. image:: https://img.shields.io/badge/lang-zh-green.svg
-        :target: https://github.com/tzutalin/labelImg/blob/master/readme/README.zh.rst
-
-.. image:: https://img.shields.io/badge/lang-jp-green.svg
-        :target: https://github.com/tzutalin/labelImg/blob/master/readme/README.jp.rst
-
-LabelImg is a graphical image annotation tool.
-
-It is written in Python and uses Qt for its graphical interface.
-
-Annotations are saved as XML files in PASCAL VOC format, the format used
-by `ImageNet <http://www.image-net.org/>`__.  Besides, it also supports YOLO and CreateML formats.
-
-.. image:: https://raw.githubusercontent.com/tzutalin/labelImg/master/demo/demo3.jpg
-     :alt: Demo Image
-
-.. image:: https://raw.githubusercontent.com/tzutalin/labelImg/master/demo/demo.jpg
-     :alt: Demo Image
-
-`Watch a demo video <https://youtu.be/p0nR2YsCY_U>`__
-
-Installation
-------------------
-
-Get from PyPI but only python3.0 or above
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-This is the simplest (one-command) install method on modern Linux distributions such as Ubuntu and Fedora.
+需要 Python 3 和 PyQt5、lxml。
 
 .. code:: shell
 
-    pip3 install labelImg
-    labelImg
-    labelImg [IMAGE_PATH] [SAVE_DIR]
+    python3 -m venv .venv
+    .venv/bin/pip install pyqt5 lxml
+    .venv/bin/pyrcc5 -o libs/resources.py resources.qrc   # 已附在 repo 裡，改過 strings 才需要重跑
+    .venv/bin/python labelImg.py
 
+Windows 把 ``.venv/bin/`` 換成 ``.venv\Scripts\``。
 
-Build from source
-~~~~~~~~~~~~~~~~~
+資料夾結構
+----------
 
-Linux/Ubuntu/Mac requires at least `Python
-2.6 <https://www.python.org/getit/>`__ and has been tested with `PyQt
-4.8 <https://www.riverbankcomputing.com/software/pyqt/intro>`__. However, `Python
-3 or above <https://www.python.org/getit/>`__ and  `PyQt5 <https://pypi.org/project/PyQt5/>`__ are strongly recommended.
+用 **Open Dir** （⌘U / Ctrl+U）打開資料夾。支援兩種結構：
 
+單一資料集::
 
-Ubuntu Linux
-^^^^^^^^^^^^
+    dataset/
+        classes.txt        類別名稱，一行一個，順序就是 YOLO 的 class id
+        images/            圖片（可有子資料夾）
+        labels/            同名 .txt 標註，子資料夾結構跟 images/ 一樣
 
-Python 3 + Qt5
+多個資料集，打開上一層，所有圖片會合成一個清單（只往下找一層）::
 
-.. code:: shell
+    root/
+        sb02_261005/   classes.txt  images/  labels/
+        sb02_261006/   classes.txt  images/  labels/
+
+每張圖會用自己所在資料集的 ``labels/`` 和 ``classes.txt``。
+
+**classes.txt**
 
-    sudo apt-get install pyqt5-dev-tools
-    sudo pip3 install -r requirements/requirements-linux-python3.txt
-    make qt5py3
-    python3 labelImg.py
-    python3 labelImg.py [IMAGE_PATH] [SAVE_DIR]
+- 一定要有 ``classes.txt``，不會用內建的預設類別。狀態列會顯示目前用的是哪一個。
+- 缺少時，Open Dir 會詢問：從其他資料集複製、選一個檔案，或從空清單開始。
+- 已經有標註卻沒有 ``classes.txt`` 時，類別會以數字 id 顯示和儲存，不會被改編號。
 
-macOS
-^^^^^
+**信心值**
 
-Python 3 + Qt5
+YOLO 標註的第 6 欄（信心值）會顯示在類別名稱後面，例如 ``one 0.96``。存檔時原樣寫回，不會重新四捨五入。
 
-.. code:: shell
+介面
+----
 
-    brew install qt  # Install qt-5.x.x by Homebrew
-    brew install libxml2
+**Box Labels 面板**
 
-    or using pip
+- Show：Show boxes 可以暫時隱藏所有框；Display Labels 控制是否在框上顯示類別文字。
+- New box：勾選 Use default label 後，新畫的框直接用選定的類別，不跳對話框。
+- Filter：只顯示目前圖片中某一類的框。
+- Classes：常駐的類別清單。
 
-    pip3 install pyqt5 lxml # Install qt and lxml by pip
+  - 選了框時，點類別就把那個框改成這個類別。
+  - 沒選框時，點類別會設成新框的類別。
 
-    make qt5py3
-    python3 labelImg.py
-    python3 labelImg.py [IMAGE_PATH] [SAVE_DIR]
+- Boxes：這張圖的框，取消勾選可以隱藏個別的框。
 
+**File List 面板（篩選）**
 
-Python 3 Virtualenv (Recommended)
+- Name：檔名包含的文字。
+- Class：包含某些類別的圖片。
+- Count：框數範圍。
+- min conf <：只列出最低信心值低於門檻的圖片，預設 0.90。
+- 篩選讓目前的圖片被隱藏時，會跳到最近的符合圖片。
+- 在清單外的圖片按 a/d，會從它在完整清單中的位置往前或往後找。
+- 目前的圖片會一直保持在清單可見的範圍內。
 
-Virtualenv can avoid a lot of the QT / Python version issues
+**縮放與移動**
 
-.. code:: shell
+- 滾輪 / 觸控板上下滑 / 雙指縮放：以游標為中心縮放。
+- 最小只能縮到整張圖剛好放進視窗。
+- 拖曳平移：以下三種方式都可以。
 
-    brew install python3
-    pip3 install pipenv
-    pipenv run pip install pyqt5==5.15.2 lxml
-    pipenv run make qt5py3
-    pipenv run python3 labelImg.py
-    [Optional] rm -rf build dist; pipenv run python setup.py py2app -A;mv "dist/labelImg.app" /Applications
+  - 在空白處按左鍵拖曳（編輯模式下）
+  - 按中鍵拖曳
+  - 按住 Option（Windows 是 Alt）加左鍵拖曳
 
-Note: The Last command gives you a nice .app file with a new SVG Icon in your /Applications folder. You can consider using the script: build-tools/build-for-macos.sh
+**復原 / 重做**
 
+- 每張圖各自保留歷史，換到別張再回來還能復原。
+- 畫框、刪框、拖曳、方向鍵微調、改類別、複製都可以復原。
+- 歷史只存在記憶體中，關掉程式就清除。
+- 標註檔在程式外被修改時，那張圖的歷史會自動丟棄。
 
-Windows
-^^^^^^^
+**其他**
 
-Install `Python <https://www.python.org/downloads/windows/>`__,
-`PyQt5 <https://www.riverbankcomputing.com/software/pyqt/download5>`__
-and `install lxml <http://lxml.de/installation.html>`__.
+- 開著注音 / 拼音輸入法時，單鍵快捷鍵（w、a、d、x、空白鍵等）照常可用。
+- 長按 a/d 會以固定速度連續換圖。
+- Delete Image（⇧⌘D / Ctrl+Shift+D）會把圖片和它的標註一起移到垃圾桶。
+- 開啟 Auto save 時，換圖會自動存檔。
 
-Open cmd and go to the `labelImg <#labelimg>`__ directory
+快捷鍵
+------
 
-.. code:: shell
+所有快捷鍵都可以在 **File → Keyboard Shortcuts** （⌘, / Ctrl+,）修改，設定存在 ``~/.labelImgSettings.pkl``。
 
-    pyrcc4 -o libs/resources.py resources.qrc
-    For pyqt5, pyrcc5 -o libs/resources.py resources.qrc
+下表的 Ctrl 在 macOS 上是 ⌘。
 
-    python labelImg.py
-    python labelImg.py [IMAGE_PATH] [SAVE_DIR]
-
-If you want to package it into a separate EXE file
-
-.. code:: shell
-
-    Install pyinstaller and execute:
-
-    pip install pyinstaller
-    pyinstaller --hidden-import=pyqt5 --hidden-import=lxml -F -n "labelImg" -c labelImg.py -p ./libs -p ./
-
-Windows + Anaconda
-^^^^^^^^^^^^^^^^^^
-
-Download and install `Anaconda <https://www.anaconda.com/download/#download>`__ (Python 3+)
-
-Open the Anaconda Prompt and go to the `labelImg <#labelimg>`__ directory
-
-.. code:: shell
-
-    conda install pyqt=5
-    conda install -c anaconda lxml
-    pyrcc5 -o libs/resources.py resources.qrc
-    python labelImg.py
-    python labelImg.py [IMAGE_PATH] [SAVE_DIR]
-
-Use Docker
-~~~~~~~~~~~~~~~~~
-.. code:: shell
-
-    docker run -it \
-    --user $(id -u) \
-    -e DISPLAY=unix$DISPLAY \
-    --workdir=$(pwd) \
-    --volume="/home/$USER:/home/$USER" \
-    --volume="/etc/group:/etc/group:ro" \
-    --volume="/etc/passwd:/etc/passwd:ro" \
-    --volume="/etc/shadow:/etc/shadow:ro" \
-    --volume="/etc/sudoers.d:/etc/sudoers.d:ro" \
-    -v /tmp/.X11-unix:/tmp/.X11-unix \
-    tzutalin/py2qt4
-
-    make qt4py2;./labelImg.py
-
-You can pull the image which has all of the installed and required dependencies. `Watch a demo video <https://youtu.be/nw1GexJzbCI>`__
-
-
-Usage
------
-
-Steps (PascalVOC)
-~~~~~~~~~~~~~~~~~
-
-1. Build and launch using the instructions above.
-2. Click 'Change default saved annotation folder' in Menu/File
-3. Click 'Open Dir'
-4. Click 'Create RectBox'
-5. Click and release left mouse to select a region to annotate the rect
-   box
-6. You can use right mouse to drag the rect box to copy or move it
-
-The annotation will be saved to the folder you specify.
-
-You can refer to the below hotkeys to speed up your workflow.
-
-Steps (YOLO)
-~~~~~~~~~~~~
-
-1. Put a ``classes.txt`` (one class name per line, in id order) at the root of your dataset folder. If it is missing, Open Dir asks you to copy one from another dataset, pick a file, or start with an empty list.
-
-2. Build and launch using the instructions above.
-
-3. Right below "Save" button in the toolbar, click "PascalVOC" button to switch to YOLO format.
-
-4. You may use Open/OpenDIR to process single or multiple images. When finished with a single image, click save.
-
-A txt file of YOLO format will be saved in the same folder as your image with same name. A file named "classes.txt" is saved to that folder too. "classes.txt" defines the list of class names that your YOLO label refers to.
-
-Note:
-
-- Your label list shall not change in the middle of processing a list of images. When you save an image, classes.txt will also get updated, while previous annotations will not be updated.
-
-- You shouldn't use "default class" function when saving to YOLO format, it will not be referred.
-
-- When saving as YOLO format, "difficult" flag is discarded.
-
-Class list
-~~~~~~~~~~
-
-The class list is the ``classes.txt`` of the opened dataset; there is no built-in default.
-The status bar shows which ``classes.txt`` is in use.
-
-Annotation visualization
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-1. Copy the existing lables file to same folder with the images. The labels file name must be same with image file name.
-
-2. Click File and choose 'Open Dir' then Open the image folder.
-
-3. Select image in File List, it will appear the bounding box and label for all objects in that image.
-
-(Choose Display Labels mode in View to show/hide lablels)
-
-
-Hotkeys
-~~~~~~~
-
-+--------------------+--------------------------------------------+
-| Ctrl + u           | Load all of the images from a directory    |
-+--------------------+--------------------------------------------+
-| Ctrl + r           | Change the default annotation target dir   |
-+--------------------+--------------------------------------------+
-| Ctrl + s           | Save                                       |
-+--------------------+--------------------------------------------+
-| Ctrl + d           | Copy the current label and rect box        |
-+--------------------+--------------------------------------------+
-| Ctrl + Shift + d   | Delete the current image                   |
-+--------------------+--------------------------------------------+
-| Space              | Flag the current image as verified         |
-+--------------------+--------------------------------------------+
-| w                  | Create a rect box                          |
-+--------------------+--------------------------------------------+
-| d                  | Next image                                 |
-+--------------------+--------------------------------------------+
-| a                  | Previous image                             |
-+--------------------+--------------------------------------------+
-| x                  | Delete the selected rect box               |
-+--------------------+--------------------------------------------+
-| Ctrl++             | Zoom in                                    |
-+--------------------+--------------------------------------------+
-| Ctrl--             | Zoom out                                   |
-+--------------------+--------------------------------------------+
-| ↑→↓←               | Keyboard arrows to move selected rect box  |
-+--------------------+--------------------------------------------+
-
-**Verify Image:**
-
-When pressing space, the user can flag the image as verified, a green background will appear.
-This is used when creating a dataset automatically, the user can then through all the pictures and flag them instead of annotate them.
-
-**Difficult:**
-
-The difficult field is set to 1 indicates that the object has been annotated as "difficult", for example, an object which is clearly visible but difficult to recognize without substantial use of context.
-According to your deep neural network implementation, you can include or exclude difficult objects during training.
-
-How to reset the settings
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-In case there are issues with loading the classes, you can either:
-
-1. From the top menu of the labelimg click on Menu/File/Reset All
-2. Remove the `.labelImgSettings.pkl` from your home directory. In Linux and Mac you can do:
-    `rm ~/.labelImgSettings.pkl`
-
-
-How to contribute
-~~~~~~~~~~~~~~~~~
-
-Send a pull request
-
-License
-~~~~~~~
-`Free software: MIT license <https://github.com/tzutalin/labelImg/blob/master/LICENSE>`_
-
-Citation: Tzutalin. LabelImg. Git code (2015). https://github.com/tzutalin/labelImg
-
-Related and additional tools
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-1. `Label Studio <https://github.com/heartexlabs/label-studio>`__ to label images, text, audio, video and time-series data for machine learning and AI
-2. `ImageNet Utils <https://github.com/tzutalin/ImageNet_Utils>`__ to
-   download image, create a label text for machine learning, etc
-3. `Use Docker to run labelImg <https://hub.docker.com/r/tzutalin/py2qt4>`__
-4. `Generating the PASCAL VOC TFRecord files <https://github.com/tensorflow/models/blob/4f32535fe7040bb1e429ad0e3c948a492a89482d/research/object_detection/g3doc/preparing_inputs.md#generating-the-pascal-voc-tfrecord-files>`__
-5. `App Icon based on Icon by Nick Roach (GPL) <https://www.elegantthemes.com/>`__
-6. `Setup python development in vscode <https://tzutalin.blogspot.com/2019/04/set-up-visual-studio-code-for-python-in.html>`__
-7. `The link of this project on iHub platform <https://code.ihub.org.cn/projects/260/repository/labelImg>`__
-8. `Convert annotation files to CSV format or format for Google Cloud AutoML <https://github.com/tzutalin/labelImg/tree/master/tools>`__
-
-
-
-Stargazers over time
-~~~~~~~~~~~~~~~~~~~~
-
-.. image:: https://starchart.cc/tzutalin/labelImg.svg
-
++-------------------------+---------------------------------------------+
+| d / a                   | 下一張 / 上一張（可長按）                   |
++-------------------------+---------------------------------------------+
+| w                       | 畫框                                        |
++-------------------------+---------------------------------------------+
+| x / Delete / Backspace  | 刪除選取的框                                |
++-------------------------+---------------------------------------------+
+| ↑→↓←                    | 微調選取的框                                |
++-------------------------+---------------------------------------------+
+| Ctrl+Z / Ctrl+Shift+Z   | 復原 / 重做                                 |
++-------------------------+---------------------------------------------+
+| Ctrl+D                  | 複製選取的框                                |
++-------------------------+---------------------------------------------+
+| Ctrl+E                  | 改類別（對話框）                            |
++-------------------------+---------------------------------------------+
+| Ctrl+V                  | 複製上一張圖的所有框                        |
++-------------------------+---------------------------------------------+
+| 空白鍵                  | 標記為已確認（verified）                    |
++-------------------------+---------------------------------------------+
+| Ctrl+S                  | 存檔                                        |
++-------------------------+---------------------------------------------+
+| Ctrl+U                  | Open Dir                                    |
++-------------------------+---------------------------------------------+
+| Ctrl+Shift+D            | 刪除圖片（移到垃圾桶）                      |
++-------------------------+---------------------------------------------+
+| Ctrl+Shift+P            | 顯示 / 隱藏框上的類別文字                   |
++-------------------------+---------------------------------------------+
+| Ctrl+F / Ctrl+=         | 符合視窗 / 原始大小                         |
++-------------------------+---------------------------------------------+
+| Ctrl+, (macOS: ⌘,)      | 自訂快捷鍵                                  |
++-------------------------+---------------------------------------------+
+
+重設設定
+--------
+
+如果設定出問題，可以用以下任一方式重設：
+
+- 用 **File → Reset All**。
+- 刪除 ``~/.labelImgSettings.pkl``。
+
+這兩種方式都會清掉自訂的快捷鍵。
+
+授權
+----
+
+MIT License，見 ``LICENSE``。原作者：Tzutalin 及 labelImg 貢獻者（`HumanSignal/labelImg <https://github.com/HumanSignal/labelImg>`__）。

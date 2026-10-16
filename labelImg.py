@@ -946,11 +946,20 @@ class MainWindow(QMainWindow, WindowMixin):
         self.filter_stats_label.setText('%d / %d' % (len(self.m_img_list), len(self.m_img_full_list)))
         if old_current and old_current in self.m_img_list:
             self.cur_img_idx = self.m_img_list.index(old_current)
-            self.file_list_widget.item(self.cur_img_idx).setSelected(True)
+            self.select_file_item(self.cur_img_idx)
         elif self.m_img_list:
             self.cur_img_idx = min(self.cur_img_idx, len(self.m_img_list) - 1)
         else:
             self.cur_img_idx = 0
+
+    def select_file_item(self, index):
+        """Highlight the current image in the file list and scroll it into view."""
+        item = self.file_list_widget.item(index)
+        if item is None:
+            return
+        # setCurrentItem also clears the old selection and moves keyboard focus row
+        self.file_list_widget.setCurrentItem(item)
+        self.file_list_widget.scrollToItem(item, QAbstractItemView.EnsureVisible)
 
     def clear_filters(self):
         self._rebuild_blocked = True
@@ -1322,8 +1331,7 @@ class MainWindow(QMainWindow, WindowMixin):
         if unicode_file_path and self.file_list_widget.count() > 0:
             if unicode_file_path in self.m_img_list:
                 index = self.m_img_list.index(unicode_file_path)
-                file_widget_item = self.file_list_widget.item(index)
-                file_widget_item.setSelected(True)
+                self.select_file_item(index)
             else:
                 self.file_list_widget.clear()
                 self.m_img_list.clear()

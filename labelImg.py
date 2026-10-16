@@ -819,9 +819,13 @@ class MainWindow(QMainWindow, WindowMixin):
             return
         if len(self.label_hist) > 0:
             self.label_dialog = LabelDialog(parent=self, list_item=self.label_hist)
-        text = self.label_dialog.pop_up(item.text())
+        shape = self.items_to_shapes[item]
+        # Edit only the class name; the list text may also carry the confidence ('AS 0.87')
+        text = self.label_dialog.pop_up(shape.label)
         if text is not None:
-            item.setText(text)
+            shape.label = text
+            shape.line_color = generate_color_by_text(text)
+            item.setText(shape.display_text())
             item.setBackground(generate_color_by_text(text))
             self.set_dirty()
             self.update_combo_box()
@@ -997,7 +1001,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def add_label(self, shape):
         shape.paint_label = self.display_label_option.isChecked()
-        item = HashableQListWidgetItem(shape.label)
+        item = HashableQListWidgetItem(shape.display_text())
         item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
         item.setCheckState(Qt.Checked)
         item.setBackground(generate_color_by_text(shape.label))
@@ -1020,8 +1024,11 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def load_labels(self, shapes):
         s = []
-        for label, points, line_color, fill_color, difficult in shapes:
+        for shape_data in shapes:
+            # YOLO shapes carry a 6th item (confidence); Pascal VOC / CreateML ones have 5
+            label, points, line_color, fill_color, difficult = shape_data[:5]
             shape = Shape(label=label)
+            shape.confidence = shape_data[5] if len(shape_data) > 5 else None
             for x, y in points:
 
                 # Ensure the labels are within the bounds of the image. If not, fix them.
@@ -1050,7 +1057,9 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def update_combo_box(self):
         # Get the unique labels and add them to the Combobox.
-        items_text_list = [str(self.label_list.item(i).text()) for i in range(self.label_list.count())]
+        # Class names, not the list text (which may include the confidence)
+        items_text_list = [str(self.items_to_shapes[self.label_list.item(i)].label)
+                           for i in range(self.label_list.count())]
 
         unique_text_list = list(set(items_text_list))
         # Add a null row for showing all the labels
@@ -1071,7 +1080,8 @@ class MainWindow(QMainWindow, WindowMixin):
                         fill_color=s.fill_color.getRgb(),
                         points=[(p.x(), p.y()) for p in s.points],
                         # add chris
-                        difficult=s.difficult)
+                        difficult=s.difficult,
+                        confidence=s.confidence)
 
         shapes = [format_shape(shape) for shape in self.canvas.shapes]
         # Can add different annotation formats here
@@ -1114,7 +1124,7 @@ class MainWindow(QMainWindow, WindowMixin):
         for i in range(self.label_list.count()):
             if text == "":
                 self.label_list.item(i).setCheckState(2)
-            elif text != self.label_list.item(i).text():
+            elif text != self.items_to_shapes[self.label_list.item(i)].label:
                 self.label_list.item(i).setCheckState(0)
             else:
                 self.label_list.item(i).setCheckState(2)
@@ -1135,8 +1145,8 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def label_item_changed(self, item):
         shape = self.items_to_shapes[item]
-        label = item.text()
-        if label != shape.label:
+        if item.text() != shape.display_text():
+            # Text was changed directly in the list; take it as the new class name
             shape.label = item.text()
             shape.line_color = generate_color_by_text(shape.label)
             self.set_dirty()

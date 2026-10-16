@@ -45,6 +45,8 @@ class Shape(object):
         self.selected = False
         self.difficult = difficult
         self.paint_label = paint_label
+        # Model confidence from a YOLO prediction's 6th column, kept as its original text (or None)
+        self.confidence = None
 
         self._highlight_index = None
         self._highlight_mode = self.NEAR_VERTEX
@@ -60,6 +62,13 @@ class Shape(object):
             # with an object attribute. Currently this
             # is used for drawing the pending line a different color.
             self.line_color = line_color
+
+    def display_text(self):
+        """Label as shown to the user: 'AS 0.87' with a confidence, just 'AS' without."""
+        label = self.label or ""
+        if self.confidence is None:
+            return label
+        return "%s %.2f" % (label, float(self.confidence))
 
     def close(self):
         self._closed = True
@@ -128,7 +137,7 @@ class Shape(object):
                         self.label = ""
                     if min_y < min_y_label:
                         min_y += min_y_label
-                    painter.drawText(int(min_x), int(min_y), self.label)
+                    painter.drawText(int(min_x), int(min_y), self.display_text())
 
             if self.fill:
                 color = self.select_fill_color if self.selected else self.fill_color
@@ -197,6 +206,7 @@ class Shape(object):
         if self.fill_color != Shape.fill_color:
             shape.fill_color = self.fill_color
         shape.difficult = self.difficult
+        shape.confidence = self.confidence
         return shape
 
     def __len__(self):

@@ -19,10 +19,11 @@ class YOLOWriter:
         self.local_img_path = local_img_path
         self.verified = False
 
-    def add_bnd_box(self, x_min, y_min, x_max, y_max, name, difficult):
+    def add_bnd_box(self, x_min, y_min, x_max, y_max, name, difficult, confidence=None):
         bnd_box = {'xmin': x_min, 'ymin': y_min, 'xmax': x_max, 'ymax': y_max}
         bnd_box['name'] = name
         bnd_box['difficult'] = difficult
+        bnd_box['confidence'] = confidence
         self.box_list.append(bnd_box)
 
     def bnd_box_to_yolo_line(self, box, class_list=[]):
@@ -58,7 +59,11 @@ class YOLOWriter:
         box_lines = []
         for box in self.box_list:
             class_index, x_center, y_center, w, h = self.bnd_box_to_yolo_line(box, class_list)
-            box_lines.append("%d %.6f %.6f %.6f %.6f\n" % (class_index, x_center, y_center, w, h))
+            line = "%d %.6f %.6f %.6f %.6f" % (class_index, x_center, y_center, w, h)
+            # Write the model's confidence (6th column) back exactly as it was read
+            if box.get('confidence') is not None:
+                line += " %s" % box['confidence']
+            box_lines.append(line + "\n")
 
         with codecs.open(target_file, 'w', encoding=ENCODE_METHOD) as out_file:
             out_file.writelines(box_lines)
@@ -106,10 +111,10 @@ class YoloReader:
     def get_shapes(self):
         return self.shapes
 
-    def add_shape(self, label, x_min, y_min, x_max, y_max, difficult):
+    def add_shape(self, label, x_min, y_min, x_max, y_max, difficult, confidence=None):
 
         points = [(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
-        self.shapes.append((label, points, None, None, difficult))
+        self.shapes.append((label, points, None, None, difficult, confidence))
 
     def yolo_line_to_shape(self, class_index, x_center, y_center, w, h):
         idx = int(class_index)
@@ -136,9 +141,17 @@ class YoloReader:
             fields = bndBox.split()
             if len(fields) < 5:
                 continue  # skip blank / malformed lines
-            # Model predictions may carry a 6th confidence column; only the first 5 are used
+            # Model predictions may carry a 6th confidence column
             class_index, x_center, y_center, w, h = fields[:5]
+            # Kept as the original text so saving writes it back unchanged (e.g. '0.87', not '0.870000')
+            confidence = None
+            if len(fields) >= 6:
+                try:
+                    float(fields[5])
+                    confidence = fields[5]
+                except ValueError:
+                    confidence = None
             label, x_min, y_min, x_max, y_max = self.yolo_line_to_shape(class_index, x_center, y_center, w, h)
 
             # Caveat: difficult flag is discarded when saved as yolo format.
-            self.add_shape(label, x_min, y_min, x_max, y_max, False)
+            self.add_shape(label, x_min, y_min, x_max, y_max, False, confidence)

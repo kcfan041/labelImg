@@ -106,7 +106,8 @@ class LabelFile(object):
             # Add Chris
             difficult = int(shape['difficult'])
             bnd_box = LabelFile.convert_points_to_bnd_box(points)
-            writer.add_bnd_box(bnd_box[0], bnd_box[1], bnd_box[2], bnd_box[3], label, difficult)
+            writer.add_bnd_box(bnd_box[0], bnd_box[1], bnd_box[2], bnd_box[3], label, difficult,
+                               shape.get('confidence'))
 
         writer.save(target_file=filename, class_list=class_list, classes_file=classes_file)
         return

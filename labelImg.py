@@ -153,8 +153,15 @@ class MainWindow(QMainWindow, WindowMixin):
         self.diffc_button.setChecked(False)
         self.diffc_button.stateChanged.connect(self.button_state)
         self.diffc_button.setVisible(False)
-        self.edit_button = QToolButton()
-        self.edit_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+
+        # Always-visible class list: click a class to relabel the selected box, or with no box
+        # selected, to pick the class new boxes get (replaces opening the Edit Label dialog)
+        self.class_list = QListWidget()
+        self.class_list.setToolTip('Click: set the selected box to this class.\n'
+                                   'With no box selected: new boxes get this class.')
+        self.class_list.itemClicked.connect(self.class_list_clicked)
+        self.class_list.setFocusPolicy(Qt.NoFocus)  # keep keys (a / d / w ...) on the canvas
+        self.use_default_label_checkbox.toggled.connect(lambda _: self.highlight_class_list())
 
         # Quick on/off for what's drawn on the image (boxes, and the class text above them)
         self.show_boxes_checkbox = QCheckBox(get_str('showBoxes'))
@@ -186,8 +193,10 @@ class MainWindow(QMainWindow, WindowMixin):
         form.setColumnStretch(2, 1)
 
         list_layout.setSpacing(2)
-        list_layout.addWidget(self.edit_button)
         list_layout.addWidget(panel)
+        list_layout.addWidget(QLabel(' Classes:'))
+        list_layout.addWidget(self.class_list)
+        list_layout.addWidget(QLabel(' Boxes:'))
 
         # Create and add a widget for showing current label items
         self.label_list = QListWidget()
@@ -459,7 +468,6 @@ class MainWindow(QMainWindow, WindowMixin):
         edit = action(get_str('editLabel'), self.edit_label,
                       'Ctrl+E', 'edit', get_str('editLabelDetail'),
                       enabled=False)
-        self.edit_button.setDefaultAction(edit)
 
         shape_line_color = action(get_str('shapeLineColor'), self.choose_shape_line_color,
                                   icon='color_line', tip=get_str('shapeLineColorDetail'),
@@ -700,7 +708,6 @@ class MainWindow(QMainWindow, WindowMixin):
         self._beginner = not value
         self.canvas.set_editing(True)
         self.populate_mode_actions()
-        self.edit_button.setVisible(not value)
         if value:
             self.actions.createMode.setEnabled(True)
             self.actions.editMode.setEnabled(False)
@@ -1013,14 +1020,80 @@ class MainWindow(QMainWindow, WindowMixin):
         # Edit only the class name; the list text may also carry the confidence ('AS 0.87')
         text = self.label_dialog.pop_up(shape.label)
         if text is not None and self.check_label_allowed(text):
-            if text != shape.label:
-                self.record_edit()
-            shape.label = text
-            shape.line_color = generate_color_by_text(text)
-            item.setText(shape.display_text())
-            item.setBackground(generate_color_by_text(text))
-            self.set_dirty()
-            self.update_combo_box()
+            self.set_shape_label(shape, text)
+
+    def set_shape_label(self, shape, text):
+        """Change one box's class (undoable)."""
+        if text == shape.label:
+            return
+        self.record_edit()
+        shape.label = text
+        shape.line_color = generate_color_by_text(text)
+        item = self.shapes_to_items[shape]
+        item.setText(shape.display_text())
+        item.setBackground(generate_color_by_text(text))
+        if text not in self.label_hist and self.classes_known:
+            self.label_hist.append(text)
+        self.set_dirty()
+        self.update_combo_box()
+        self.canvas.update()
+
+    def class_list_rows(self):
+        """Class names for the class list. Without classes.txt boxes keep plain ids, so list
+        the ids known so far plus the ones used on this image."""
+        if self.classes_known:
+            return list(self.label_hist)
+        used = set(self.label_hist) | set(str(s.label) for s in self.canvas.shapes)
+        return sorted(used, key=lambda x: (not x.isdigit(), int(x) if x.isdigit() else 0, x))
+
+    def refresh_class_list(self):
+        rows = self.class_list_rows()
+        if rows != getattr(self, '_class_list_rows', None):
+            self._class_list_rows = rows
+            self.class_list.clear()
+            for i, name in enumerate(rows):
+                # YOLO id first, as written in the label files
+                text = '%d  %s' % (i, name) if self.classes_known else name
+                item = QListWidgetItem(text)
+                item.setData(Qt.UserRole, name)
+                item.setBackground(generate_color_by_text(name))
+                self.class_list.addItem(item)
+            row_h = max(self.class_list.sizeHintForRow(0), 16)
+            self.class_list.setMaximumHeight(row_h * 8 + 2 * self.class_list.frameWidth() + 2)
+        self.highlight_class_list()
+
+    def highlight_class_list(self):
+        """Mark the selected box's class, or the class new boxes get."""
+        shape = self.canvas.selected_shape
+        if shape is not None:
+            name = str(shape.label)
+        elif self.use_default_label_checkbox.isChecked():
+            name = self.default_label
+        else:
+            name = None
+        rows = getattr(self, '_class_list_rows', [])
+        self.class_list.blockSignals(True)
+        if name in rows:
+            self.class_list.setCurrentRow(rows.index(name))
+            self.class_list.scrollToItem(self.class_list.currentItem())
+        else:
+            self.class_list.setCurrentRow(-1)
+            self.class_list.clearSelection()
+        self.class_list.blockSignals(False)
+
+    def class_list_clicked(self, item):
+        name = item.data(Qt.UserRole)
+        shape = self.canvas.selected_shape
+        if shape is not None and self.canvas.editing():
+            if self.check_label_allowed(name):
+                self.set_shape_label(shape, name)
+        else:
+            # No box selected: this becomes the class of the next boxes, without the dialog
+            if name in self.label_hist:
+                self.default_label_combo_box.cb.setCurrentIndex(self.label_hist.index(name))
+            self.default_label = name
+            self.use_default_label_checkbox.setChecked(True)
+        self.highlight_class_list()
 
     # Tzutalin 20160906 : Add file list and dock to move faster
     def file_item_double_clicked(self, item=None):
@@ -1251,6 +1324,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.actions.edit.setEnabled(selected)
         self.actions.shapeLineColor.setEnabled(selected)
         self.actions.shapeFillColor.setEnabled(selected)
+        self.highlight_class_list()
 
     def add_label(self, shape):
         shape.paint_label = self.display_label_option.isChecked()
@@ -1318,6 +1392,7 @@ class MainWindow(QMainWindow, WindowMixin):
         unique_text_list = [ALL_CLASSES_ITEM] + sorted(set(items_text_list))
 
         self.combo_box.update_items(unique_text_list)
+        self.refresh_class_list()
 
     def save_labels(self, annotation_file_path):
         annotation_file_path = ustr(annotation_file_path)
@@ -1387,6 +1462,8 @@ class MainWindow(QMainWindow, WindowMixin):
         # index is -1 when the combo box is cleared (e.g. Open Dir with no classes.txt)
         if 0 <= index < len(self.label_hist):
             self.default_label = self.label_hist[index]
+        if hasattr(self, 'class_list'):
+            self.highlight_class_list()
 
     def label_selection_changed(self):
         item = self.current_item()
@@ -1448,6 +1525,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
             if text not in self.label_hist:
                 self.label_hist.append(text)
+                self.refresh_class_list()
         else:
             # self.canvas.undoLastLine()
             self.canvas.reset_all_lines()
@@ -1777,6 +1855,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.default_label_combo_box.cb.setCurrentIndex(self.label_hist.index(self.default_label))
         self.label_dialog = LabelDialog(parent=self, list_item=self.label_hist)
         self.update_classes_status()
+        self.refresh_class_list()
 
     def check_label_allowed(self, text):
         """Without classes.txt, ids are kept as numbers; a new class name would get an id that may

@@ -7,6 +7,7 @@ import platform
 import shutil
 import sys
 import webbrowser as wb
+from collections import OrderedDict
 from functools import partial
 
 try:
@@ -279,6 +280,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.zoomRequest.connect(self.zoom_request)
         self.canvas.zoomAtRequest.connect(self.zoom_at)
         self.canvas.panRequest.connect(self.pan_request)
+        self.undo_history = OrderedDict()  # image path -> undo/redo snapshots, see record_edit
+        self._restoring_undo = False
         self._zoom_exact = None  # unrounded zoom %, see zoom_at
         self.canvas.lightRequest.connect(self.light_request)
         self.canvas.set_drawing_shape_to_square(settings.get(SETTING_DRAW_SQUARE, False))
@@ -296,6 +299,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.canvas.newShape.connect(self.new_shape)
         self.canvas.shapeMoved.connect(self.set_dirty)
+        self.canvas.editStarted.connect(self.on_canvas_edit)
         self.canvas.selectionChanged.connect(self.shape_selection_changed)
         self.canvas.drawingPolygon.connect(self.toggle_drawing_sensitive)
 
@@ -378,6 +382,12 @@ class MainWindow(QMainWindow, WindowMixin):
                         'x', 'delete', get_str('delBoxDetail'), enabled=False)
         copy = action(get_str('dupBox'), self.copy_selected_shape,
                       'Ctrl+D', 'copy', get_str('dupBoxDetail'),
+                      enabled=False)
+        # 'Ctrl' is Cmd on macOS. Not QKeySequence.Redo: on Windows that includes Ctrl+Y,
+        # which is already the save-format toggle.
+        undo = action('Undo', self.undo_edit, 'Ctrl+Z', 'undo', 'Undo the last box edit on this image',
+                      enabled=False)
+        redo = action('Redo', self.redo_edit, 'Ctrl+Shift+Z', 'undo', 'Redo the box edit undone last',
                       enabled=False)
 
         advanced_mode = action(get_str('advancedMode'), self.toggle_advanced_mode,
@@ -478,7 +488,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         # Store actions for further handling.
         self.actions = Struct(save=save, save_format=save_format, saveAs=save_as, open=open, close=close, resetAll=reset_all, deleteImg=delete_image,
-                              lineColor=color1, create=create, delete=delete, edit=edit, copy=copy,
+                              lineColor=color1, create=create, delete=delete, edit=edit, copy=copy, undo=undo, redo=redo,
                               createMode=create_mode, editMode=edit_mode, advancedMode=advanced_mode,
                               shapeLineColor=shape_line_color, shapeFillColor=shape_fill_color,
                               zoom=zoom, zoomIn=zoom_in, zoomOut=zoom_out, zoomOrg=zoom_org,
@@ -489,7 +499,7 @@ class MainWindow(QMainWindow, WindowMixin):
                               fileMenuActions=(
                                   open, open_dir, save, save_as, close, reset_all, quit),
                               beginner=(), advanced=(),
-                              editMenu=(edit, copy, delete,
+                              editMenu=(undo, redo, None, edit, copy, delete,
                                         None, color1, self.draw_squares_option),
                               beginnerContext=(create, edit, copy, delete),
                               advancedContext=(create_mode, edit_mode, edit, copy,
@@ -720,6 +730,142 @@ class MainWindow(QMainWindow, WindowMixin):
         self.tools.clear()
         add_actions(self.tools, self.actions.advanced)
 
+    # ---- Undo / redo ------------------------------------------------------------------------
+    # Every image keeps its own history of box snapshots (taken right before each edit), so
+    # going back to an earlier image can still undo there. Kept in memory for this session only.
+    UNDO_STEPS = 100    # per image
+    UNDO_IMAGES = 300   # images with a history; the least recently edited are dropped first
+
+    def _snapshot(self, shapes=None):
+        shapes = self.canvas.shapes if shapes is None else shapes
+        return [dict(label=s.label, points=[(p.x(), p.y()) for p in s.points],
+                     confidence=s.confidence, difficult=s.difficult,
+                     line_color=s.line_color.getRgb(), fill_color=s.fill_color.getRgb(),
+                     visible=self.canvas.visible.get(s, True))
+                for s in shapes]
+
+    @staticmethod
+    def _same_shapes(a, b, tol=1.5):
+        """Snapshot equality allowing the sub-pixel rounding a save + reload introduces."""
+        if len(a) != len(b):
+            return False
+        for s, t in zip(a, b):
+            if s['label'] != t['label'] or s['confidence'] != t['confidence'] or len(s['points']) != len(t['points']):
+                return False
+            for (x1, y1), (x2, y2) in zip(s['points'], t['points']):
+                if abs(x1 - x2) > tol or abs(y1 - y2) > tol:
+                    return False
+        return True
+
+    def _history(self, path, create=True):
+        h = self.undo_history.get(path)
+        if h is None and create:
+            h = self.undo_history[path] = {'undo': [], 'redo': [], 'last_kind': None, 'state': None}
+            while len(self.undo_history) > self.UNDO_IMAGES:
+                self.undo_history.popitem(last=False)
+        if h is not None:
+            self.undo_history.move_to_end(path)
+        return h
+
+    def record_edit(self, kind=None, shapes=None):
+        """Call right before changing the boxes. Repeats of the same kind (arrow-key nudges of
+        one box in one direction) are merged into a single step."""
+        if self.file_path is None or self._restoring_undo:
+            return
+        h = self._history(self.file_path)
+        if kind is None or kind != h['last_kind']:
+            h['undo'].append(self._snapshot(shapes))
+            del h['undo'][:-self.UNDO_STEPS]
+        h['redo'] = []
+        h['last_kind'] = kind
+        self.update_undo_actions()
+
+    def on_canvas_edit(self, kind):
+        if kind.startswith('nudge') and self.canvas.selected_shape is not None:
+            kind = '%s-%d' % (kind, id(self.canvas.selected_shape))
+        else:
+            kind = None  # each drag is its own step
+        self.record_edit(kind)
+
+    def _restore_snapshot(self, snap):
+        self._restoring_undo = True
+        try:
+            self.canvas.de_select_shape()
+            self.items_to_shapes.clear()
+            self.shapes_to_items.clear()
+            self.label_list.clear()
+            shapes = []
+            for d in snap:
+                shape = Shape(label=d['label'])
+                for x, y in d['points']:
+                    shape.add_point(QPointF(x, y))
+                shape.close()
+                shape.confidence = d['confidence']
+                shape.difficult = d['difficult']
+                shape.line_color = QColor(*d['line_color'])
+                shape.fill_color = QColor(*d['fill_color'])
+                shapes.append(shape)
+                self.add_label(shape)
+            self.canvas.visible = {}
+            self.canvas.load_shapes(shapes)
+            for shape, d in zip(shapes, snap):
+                if not d['visible']:
+                    self.shapes_to_items[shape].setCheckState(Qt.Unchecked)
+            self.update_combo_box()
+            for action in self.actions.onShapesPresent:
+                action.setEnabled(bool(shapes))
+            self.shape_selection_changed(False)
+            self.set_dirty()
+        finally:
+            self._restoring_undo = False
+
+    def _undo_redo(self, take, give):
+        if self.canvas.drawing() and self.canvas.cancel_drawing():
+            return  # Undo while drawing just drops the half-drawn box
+        if self.file_path is None:
+            return
+        h = self._history(self.file_path, create=False)
+        if not h:
+            return
+        current = self._snapshot()
+        # Skip steps that changed nothing (e.g. a box grabbed but not really moved)
+        while h[take] and h[take][-1] == current:
+            h[take].pop()
+        if not h[take]:
+            self.update_undo_actions()
+            return
+        h[give].append(current)
+        self._restore_snapshot(h[take].pop())
+        h['last_kind'] = None
+        self.update_undo_actions()
+        self.status('Undo' if take == 'undo' else 'Redo')
+
+    def undo_edit(self, _value=False):
+        self._undo_redo('undo', 'redo')
+
+    def redo_edit(self, _value=False):
+        self._undo_redo('redo', 'undo')
+
+    def update_undo_actions(self):
+        h = self._history(self.file_path, create=False) if self.file_path else None
+        self.actions.undo.setEnabled(bool(h and h['undo']) or bool(self.canvas.current))
+        self.actions.redo.setEnabled(bool(h and h['redo']))
+
+    def _leave_image_for_undo(self):
+        """Remember the boxes as they are when leaving an image, to detect outside changes."""
+        if self.file_path and self.file_path in self.undo_history:
+            h = self.undo_history[self.file_path]
+            h['state'] = self._snapshot()
+            h['last_kind'] = None
+
+    def _enter_image_for_undo(self):
+        """On (re)opening an image: drop its history if the file no longer matches it, e.g.
+        edited by another tool or loaded from a different save dir."""
+        h = self.undo_history.get(self.file_path)
+        if h is not None and h['state'] is not None and not self._same_shapes(h['state'], self._snapshot()):
+            del self.undo_history[self.file_path]
+        self.update_undo_actions()
+
     def set_dirty(self):
         self.dirty = True
         self.actions.save.setEnabled(True)
@@ -745,6 +891,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.statusBar().showMessage(message, delay)
 
     def reset_state(self):
+        self._leave_image_for_undo()
         self.items_to_shapes.clear()
         self.shapes_to_items.clear()
         self.label_list.clear()
@@ -813,6 +960,7 @@ class MainWindow(QMainWindow, WindowMixin):
     def toggle_drawing_sensitive(self, drawing=True):
         """In the middle of drawing, toggling between modes should be disabled."""
         self.actions.editMode.setEnabled(not drawing)
+        self.update_undo_actions()  # Undo cancels a box being drawn
         if not drawing and self.beginner():
             # Cancel creation.
             print('Cancel creation.')
@@ -865,6 +1013,8 @@ class MainWindow(QMainWindow, WindowMixin):
         # Edit only the class name; the list text may also carry the confidence ('AS 0.87')
         text = self.label_dialog.pop_up(shape.label)
         if text is not None and self.check_label_allowed(text):
+            if text != shape.label:
+                self.record_edit()
             shape.label = text
             shape.line_color = generate_color_by_text(text)
             item.setText(shape.display_text())
@@ -1214,6 +1364,8 @@ class MainWindow(QMainWindow, WindowMixin):
             return False
 
     def copy_selected_shape(self):
+        if self.canvas.selected_shape is not None:
+            self.record_edit()
         shape = self.canvas.copy_selected_shape()
         if shape is None:
             return
@@ -1249,6 +1401,7 @@ class MainWindow(QMainWindow, WindowMixin):
         shape = self.items_to_shapes[item]
         if item.text() != shape.display_text():
             # Text was changed directly in the list; take it as the new class name
+            self.record_edit()
             shape.label = item.text()
             shape.line_color = generate_color_by_text(shape.label)
             self.set_dirty()
@@ -1282,6 +1435,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.diffc_button.setChecked(False)
         if text is not None:
             self.prev_label_text = text
+            self.record_edit(shapes=self.canvas.shapes[:-1])  # state before the new box
             generate_color = generate_color_by_text(text)
             shape = self.canvas.set_last_label(text, generate_color, generate_color)
             self.add_label(shape)
@@ -1540,6 +1694,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.add_recent_file(self.file_path)
             self.toggle_actions(True)
             self.show_bounding_box_from_annotation_file(self.file_path)
+            self._enter_image_for_undo()  # after the boxes are loaded from the file
 
             counter = self.counter_str()
             self.setWindowTitle(__appname__ + ' ' + file_path + ' ' + counter)
@@ -2176,6 +2331,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 if os.path.exists(path) and not QFile.moveToTrash(path)[0]:
                     QMessageBox.critical(self, u'Delete image', u'Could not move to Trash:\n%s' % path)
                     return
+            self.undo_history.pop(delete_path, None)
             self.import_dir_images(self.dir_name)
             if self.img_count > 0:
                 self.cur_img_idx = min(idx, self.img_count - 1)
@@ -2226,6 +2382,9 @@ class MainWindow(QMainWindow, WindowMixin):
             self.set_dirty()
 
     def delete_selected_shape(self):
+        if self.canvas.selected_shape is None:
+            return
+        self.record_edit()
         self.remove_label(self.canvas.delete_selected())
         self.set_dirty()
         if self.no_shapes():
@@ -2252,11 +2411,13 @@ class MainWindow(QMainWindow, WindowMixin):
         if self.canvas.selected_shape is None:
             # True if one accidentally touches the left mouse button before releasing
             return
+        self.record_edit()
         self.canvas.end_move(copy=True)
         self.add_label(self.canvas.selected_shape)
         self.set_dirty()
 
     def move_shape(self):
+        self.record_edit()
         self.canvas.end_move(copy=False)
         self.set_dirty()
 
@@ -2308,6 +2469,7 @@ class MainWindow(QMainWindow, WindowMixin):
         current_index = self.m_img_list.index(self.file_path)
         if current_index - 1 >= 0:
             prev_file_path = self.m_img_list[current_index - 1]
+            self.record_edit()
             self.show_bounding_box_from_annotation_file(prev_file_path)
             self.save_file()
 

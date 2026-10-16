@@ -27,6 +27,9 @@ class Canvas(QWidget):
     zoomAtRequest = pyqtSignal(float, QPointF)
     # Drag-to-pan: move the view by (dx, dy) screen pixels (the image follows the mouse)
     panRequest = pyqtSignal(int, int)
+    # Emitted right before the canvas itself changes a box (drag / arrow-key nudge), so the
+    # window can record an undo step. The argument names the edit so repeats can be merged.
+    editStarted = pyqtSignal(str)
     lightRequest = pyqtSignal(int)
     scrollRequest = pyqtSignal(int, int)
     newShape = pyqtSignal()
@@ -76,6 +79,7 @@ class Canvas(QWidget):
         # moves under the mouse while the view scrolls.
         self._panning = False
         self._pan_last = QPoint()
+        self._drag_edit_started = False  # one undo step per drag, not per mouse move
 
     def set_drawing_color(self, qcolor):
         self.drawing_line_color = qcolor
@@ -211,6 +215,10 @@ class Canvas(QWidget):
 
         # Polygon/Vertex moving.
         if Qt.LeftButton & ev.buttons():
+            if (self.selected_vertex() or (self.selected_shape and self.prev_point)) \
+                    and not self._drag_edit_started:
+                self._drag_edit_started = True
+                self.editStarted.emit('drag')
             if self.selected_vertex():
                 self.bounded_move_vertex(pos)
                 self.shapeMoved.emit()
@@ -285,6 +293,7 @@ class Canvas(QWidget):
 
     def mousePressEvent(self, ev):
         pos = self.transform_pos(ev.pos())
+        self._drag_edit_started = False
 
         if ev.button() == Qt.MiddleButton or (
                 ev.button() == Qt.LeftButton and int(ev.modifiers()) & int(Qt.AltModifier)):
@@ -676,7 +685,18 @@ class Canvas(QWidget):
         elif key == Qt.Key_Down and self.selected_shape:
             self.move_one_pixel('Down')
 
+    def cancel_drawing(self):
+        """Drop the box being drawn (Esc / Undo while drawing). Returns True if there was one."""
+        if not self.current:
+            return False
+        self.current = None
+        self.drawingPolygon.emit(False)
+        self.update()
+        return True
+
     def move_one_pixel(self, direction):
+        # Consecutive nudges in the same direction are merged into one undo step by the window
+        self.editStarted.emit('nudge-' + direction)
         # print(self.selectedShape.points)
         if direction == 'Left' and not self.move_out_of_bound(QPointF(-1.0, 0)):
             # print("move Left one pixel")

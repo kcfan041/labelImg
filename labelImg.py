@@ -98,6 +98,11 @@ class MainWindow(QMainWindow, WindowMixin):
         self.m_img_full_list = []  # unfiltered master list
         self.m_img_cache = {}      # img_path -> {classes:set, count:int, min_conf:float|None}
         self._rebuild_blocked = False
+        # Multi-dataset mode (Open Dir on a folder of datasets, each with images/ labels/ classes.txt):
+        # list of {'root', 'images', 'labels', 'classes_file', 'classes'}; empty when not in this mode
+        self.sub_datasets = []
+        self.multi_root = None
+        self._active_dataset = None
         self.dir_name = None
         self.label_hist = []
         self.last_open_dir = None
@@ -856,6 +861,7 @@ class MainWindow(QMainWindow, WindowMixin):
         txt_path = self._label_txt_path(image_path)
         if not txt_path:
             return stats
+        class_list = self.class_list_for(image_path) or []
         try:
             with open(txt_path, 'r') as f:
                 for line in f:
@@ -867,8 +873,8 @@ class MainWindow(QMainWindow, WindowMixin):
                         class_idx = int(fields[0])
                     except ValueError:
                         continue
-                    if 0 <= class_idx < len(self.label_hist):
-                        stats['classes'].add(self.label_hist[class_idx])
+                    if 0 <= class_idx < len(class_list):
+                        stats['classes'].add(class_list[class_idx])
                     else:
                         stats['classes'].add(str(class_idx))
                     if len(fields) >= 6:
@@ -1301,6 +1307,8 @@ class MainWindow(QMainWindow, WindowMixin):
         # Fix bug: An  index error after select a directory when open a new file.
         unicode_file_path = ustr(file_path)
         unicode_file_path = os.path.abspath(unicode_file_path)
+        # Multi-dataset mode: use the classes.txt of the dataset this image belongs to
+        self.activate_dataset_for(unicode_file_path)
         # Tzutalin 20160906 : Add file list and dock to move faster
         # Highlight the file item
         if unicode_file_path and self.file_list_widget.count() > 0:
@@ -1378,6 +1386,70 @@ class MainWindow(QMainWindow, WindowMixin):
         """
         return '[{} / {}]'.format(self.cur_img_idx + 1, self.img_count)
 
+    @staticmethod
+    def read_classes_file(path):
+        """Class names from a classes.txt, one per line, indexed the same way YoloReader does."""
+        if not path or not os.path.isfile(path):
+            return None
+        with codecs.open(path, 'r', 'utf8') as f:
+            content = f.read().strip('\n')
+        return [line.strip() for line in content.split('\n')] if content else []
+
+    @staticmethod
+    def find_sub_datasets(root):
+        """Direct sub-folders of root laid out as <name>/images (+ labels/, classes.txt)."""
+        datasets = []
+        try:
+            names = sorted(os.listdir(root))
+        except OSError:
+            return datasets
+        for name in names:
+            sub = os.path.join(root, name)
+            images = os.path.join(sub, 'images')
+            if not name.startswith('.') and os.path.isdir(images):
+                datasets.append({'root': os.path.abspath(sub),
+                                 'images': os.path.abspath(images),
+                                 'labels': os.path.abspath(os.path.join(sub, 'labels')),
+                                 'classes_file': os.path.abspath(os.path.join(sub, 'classes.txt')),
+                                 'classes': None})
+        return datasets
+
+    def dataset_for(self, image_path):
+        """The sub-dataset an image belongs to in multi-dataset mode, else None."""
+        if not self.sub_datasets or not image_path:
+            return None
+        path = os.path.abspath(image_path)
+        for dataset in self.sub_datasets:
+            if path.startswith(dataset['images'] + os.sep):
+                return dataset
+        return None
+
+    def class_list_for(self, image_path):
+        """Class list used to map YOLO class ids for this image."""
+        dataset = self.dataset_for(image_path)
+        if dataset is not None:
+            return dataset['classes']
+        return self.label_hist
+
+    def activate_dataset_for(self, image_path):
+        """Switch label_hist / classes.txt to the sub-dataset of this image (multi-dataset mode)."""
+        dataset = self.dataset_for(image_path)
+        if dataset is None or dataset is self._active_dataset:
+            return
+        self._active_dataset = dataset
+        # Shared list object: classes added while labelling go straight into this dataset's list
+        self.label_hist = dataset['classes']
+        self.classes_file_path = dataset['classes_file']
+        self.default_label_combo_box.cb.blockSignals(True)
+        self.default_label_combo_box.cb.clear()
+        self.default_label_combo_box.cb.addItems(self.label_hist)
+        self.default_label_combo_box.cb.blockSignals(False)
+        if self.default_label not in self.label_hist:
+            self.default_label = self.label_hist[0] if self.label_hist else ''
+        else:
+            self.default_label_combo_box.cb.setCurrentIndex(self.label_hist.index(self.default_label))
+        self.label_dialog = LabelDialog(parent=self, list_item=self.label_hist)
+
     def annotation_stem(self, image_path):
         """Annotation path (without extension) for an image under default_save_dir.
 
@@ -1386,6 +1458,12 @@ class MainWindow(QMainWindow, WindowMixin):
         don't share one label file.
         """
         stem = os.path.splitext(os.path.basename(image_path))[0]
+        dataset = self.dataset_for(image_path)
+        if dataset is not None:
+            # Multi-dataset mode: <dataset>/images/<sub>/x.jpg -> <dataset>/labels/<sub>/x
+            rel = os.path.relpath(os.path.dirname(os.path.abspath(image_path)), dataset['images'])
+            sub_dir = '' if rel == os.curdir else rel
+            return os.path.join(dataset['labels'], sub_dir, stem)
         sub_dir = ''
         if self.dir_name:
             rel = os.path.relpath(os.path.dirname(os.path.abspath(image_path)), os.path.abspath(self.dir_name))
@@ -1526,6 +1604,12 @@ class MainWindow(QMainWindow, WindowMixin):
 
         if dir_path is not None and len(dir_path) > 1:
             self.default_save_dir = dir_path
+            if self.sub_datasets:
+                # A manually chosen save dir replaces the per-dataset labels/ folders;
+                # classes.txt then goes next to the saved label files as usual
+                self.sub_datasets = []
+                self._active_dataset = None
+                self.classes_file_path = None
 
         # Reload the current image so its old shapes are cleared before reading from the new dir.
         # With unsaved edits, keep them on screen instead so they can be saved into the new dir.
@@ -1587,6 +1671,18 @@ class MainWindow(QMainWindow, WindowMixin):
         if not target_dir_path:
             return
 
+        # Leave any previous multi-dataset session
+        self.sub_datasets = []
+        self.multi_root = None
+        self._active_dataset = None
+
+        # Folder of datasets: target/<name>/{images,labels,classes.txt}
+        if not os.path.isdir(os.path.join(target_dir_path, 'images')):
+            datasets = self.find_sub_datasets(target_dir_path)
+            if datasets:
+                self.open_multi_dataset_dir(target_dir_path, datasets)
+                return
+
         # Support dataset layout: dataset_dir/{images,labels,classes.txt}
         images_subdir = os.path.join(target_dir_path, 'images')
         labels_subdir = os.path.join(target_dir_path, 'labels')
@@ -1621,6 +1717,32 @@ class MainWindow(QMainWindow, WindowMixin):
         # first image's annotations; loading them again here would duplicate the label list
         self.import_dir_images(import_path)
 
+    def open_multi_dataset_dir(self, root, datasets):
+        """Open every <root>/<name>/images as one list; each dataset keeps its own labels/ and classes.txt."""
+        for dataset in datasets:
+            os.makedirs(dataset['labels'], exist_ok=True)
+            # Same priority as a single dataset: classes.txt > labels/classes.txt > predefined classes
+            classes = None
+            for path in (dataset['classes_file'], os.path.join(dataset['labels'], 'classes.txt'),
+                         self.predefined_classes_file):
+                classes = self.read_classes_file(path)
+                if classes is not None:
+                    break
+            dataset['classes'] = classes if classes is not None else []
+
+        self.sub_datasets = datasets
+        self.multi_root = os.path.abspath(root)
+        # Non-None so saving goes through annotation_stem(), which picks each dataset's labels/
+        self.default_save_dir = self.multi_root
+        self.last_open_dir = root
+        self.import_dir_images(self.multi_root)
+
+        message = 'Opened %d datasets: %s' % (len(datasets), ', '.join(os.path.basename(d['root']) for d in datasets))
+        if len({tuple(d['classes']) for d in datasets}) > 1:
+            message += '  |  classes.txt differs between datasets; each dataset uses its own'
+        self.statusBar().showMessage(message)
+        self.statusBar().show()
+
     def import_dir_images(self, dir_path):
         if not self.may_continue() or not dir_path:
             return
@@ -1629,7 +1751,13 @@ class MainWindow(QMainWindow, WindowMixin):
         self.dir_name = dir_path
         self.file_path = None
         self.file_list_widget.clear()
-        self.m_img_full_list = self.scan_all_images(dir_path)
+        if self.sub_datasets and os.path.abspath(dir_path) == self.multi_root:
+            # Only the images/ folders of the datasets, in dataset order
+            self.m_img_full_list = []
+            for dataset in self.sub_datasets:
+                self.m_img_full_list.extend(self.scan_all_images(dataset['images']))
+        else:
+            self.m_img_full_list = self.scan_all_images(dir_path)
         self._build_label_cache()
         self.rebuild_file_list()
         self.open_next_image()

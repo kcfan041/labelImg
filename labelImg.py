@@ -47,6 +47,7 @@ from libs.create_ml_io import CreateMLReader
 from libs.create_ml_io import JSON_EXT
 from libs.ustr import ustr
 from libs.hashableQListWidgetItem import HashableQListWidgetItem
+from libs.physical_shortcuts import PhysicalKeyShortcuts
 
 __appname__ = 'labelImg'
 
@@ -94,6 +95,9 @@ class MainWindow(QMainWindow, WindowMixin):
 
         # For loading all image under a directory
         self.m_img_list = []
+        self.m_img_full_list = []  # unfiltered master list
+        self.m_img_cache = {}      # img_path -> {classes:set, count:int, min_conf:float|None}
+        self._rebuild_blocked = False
         self.dir_name = None
         self.label_hist = []
         self.last_open_dir = None
@@ -108,6 +112,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.screencast = "https://youtu.be/p0nR2YsCY_U"
 
         # Load predefined classes to the list
+        self.predefined_classes_file = default_prefdef_class_file
         self.load_predefined_classes(default_prefdef_class_file)
 
         if self.label_hist:
@@ -173,6 +178,61 @@ class MainWindow(QMainWindow, WindowMixin):
         self.file_list_widget.itemDoubleClicked.connect(self.file_item_double_clicked)
         file_list_layout = QVBoxLayout()
         file_list_layout.setContentsMargins(0, 0, 0, 0)
+        file_list_layout.setSpacing(2)
+
+        filter_bar = QWidget()
+        grid = QGridLayout(filter_bar)
+        grid.setContentsMargins(4, 2, 4, 2)
+        grid.setSpacing(2)
+
+        self.filter_name_edit = QLineEdit()
+        self.filter_name_edit.setPlaceholderText('filename contains…')
+        self.filter_name_edit.setClearButtonEnabled(True)
+        self.filter_name_edit.textChanged.connect(lambda _: self.rebuild_file_list())
+        grid.addWidget(QLabel('Name:'), 0, 0)
+        grid.addWidget(self.filter_name_edit, 0, 1, 1, 3)
+
+        self.filter_class_menu = QMenu(self)
+        self.filter_class_button = QToolButton()
+        self.filter_class_button.setText('All classes')
+        self.filter_class_button.setPopupMode(QToolButton.InstantPopup)
+        self.filter_class_button.setMenu(self.filter_class_menu)
+        self.filter_class_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.filter_class_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        grid.addWidget(QLabel('Class:'), 1, 0)
+        grid.addWidget(self.filter_class_button, 1, 1, 1, 3)
+
+        self.filter_count_min = QSpinBox()
+        self.filter_count_min.setRange(0, 9999)
+        self.filter_count_min.setValue(0)
+        self.filter_count_max = QSpinBox()
+        self.filter_count_max.setRange(0, 9999)
+        self.filter_count_max.setValue(9999)
+        self.filter_count_min.valueChanged.connect(lambda _: self.rebuild_file_list())
+        self.filter_count_max.valueChanged.connect(lambda _: self.rebuild_file_list())
+        grid.addWidget(QLabel('Count:'), 2, 0)
+        grid.addWidget(self.filter_count_min, 2, 1)
+        grid.addWidget(QLabel('—'), 2, 2)
+        grid.addWidget(self.filter_count_max, 2, 3)
+
+        self.filter_conf_check = QCheckBox('min conf <')
+        self.filter_conf_value = QDoubleSpinBox()
+        self.filter_conf_value.setRange(0.0, 1.0)
+        self.filter_conf_value.setSingleStep(0.05)
+        self.filter_conf_value.setDecimals(2)
+        self.filter_conf_value.setValue(0.50)
+        self.filter_conf_check.stateChanged.connect(lambda _: self.rebuild_file_list())
+        self.filter_conf_value.valueChanged.connect(lambda _: self.rebuild_file_list())
+        grid.addWidget(self.filter_conf_check, 3, 0, 1, 2)
+        grid.addWidget(self.filter_conf_value, 3, 2, 1, 2)
+
+        self.filter_stats_label = QLabel('')
+        clear_btn = QPushButton('Clear')
+        clear_btn.clicked.connect(self.clear_filters)
+        grid.addWidget(self.filter_stats_label, 4, 0, 1, 3)
+        grid.addWidget(clear_btn, 4, 3)
+
+        file_list_layout.addWidget(filter_bar)
         file_list_layout.addWidget(self.file_list_widget)
         file_list_container = QWidget()
         file_list_container.setLayout(file_list_layout)
@@ -235,6 +295,8 @@ class MainWindow(QMainWindow, WindowMixin):
 
         open_prev_image = action(get_str('prevImg'), self.open_prev_image,
                                  'a', 'prev', get_str('prevImgDetail'))
+        # Holding these keys steps through images (see libs/physical_shortcuts.py)
+        self.hold_repeat_actions = [open_next_image, open_prev_image]
 
         verify = action(get_str('verifyImg'), self.verify_image,
                         'space', 'verify', get_str('verifyImgDetail'))
@@ -278,7 +340,7 @@ class MainWindow(QMainWindow, WindowMixin):
         create = action(get_str('crtBox'), self.create_shape,
                         'w', 'new', get_str('crtBoxDetail'), enabled=False)
         delete = action(get_str('delBox'), self.delete_selected_shape,
-                        'Delete', 'delete', get_str('delBoxDetail'), enabled=False)
+                        'x', 'delete', get_str('delBoxDetail'), enabled=False)
         copy = action(get_str('dupBox'), self.copy_selected_shape,
                       'Ctrl+D', 'copy', get_str('dupBoxDetail'),
                       enabled=False)
@@ -412,10 +474,10 @@ class MainWindow(QMainWindow, WindowMixin):
         # Auto saving : Enable auto saving if pressing next
         self.auto_saving = QAction(get_str('autoSaveMode'), self)
         self.auto_saving.setCheckable(True)
-        self.auto_saving.setChecked(settings.get(SETTING_AUTO_SAVE, False))
+        self.auto_saving.setChecked(settings.get(SETTING_AUTO_SAVE, True))
         # Sync single class mode from PR#106
         self.single_class_mode = QAction(get_str('singleClsMode'), self)
-        self.single_class_mode.setShortcut("Ctrl+Shift+S")
+        self.single_class_mode.setShortcut("Ctrl+Shift+C")  # Ctrl+Shift+S is Save As
         self.single_class_mode.setCheckable(True)
         self.single_class_mode.setChecked(settings.get(SETTING_SINGLE_CLASS, False))
         self.lastLabel = None
@@ -755,6 +817,8 @@ class MainWindow(QMainWindow, WindowMixin):
         item = self.current_item()
         if not item:
             return
+        if len(self.label_hist) > 0:
+            self.label_dialog = LabelDialog(parent=self, list_item=self.label_hist)
         text = self.label_dialog.pop_up(item.text())
         if text is not None:
             item.setText(text)
@@ -768,6 +832,125 @@ class MainWindow(QMainWindow, WindowMixin):
         filename = self.m_img_list[self.cur_img_idx]
         if filename:
             self.load_file(filename)
+
+    def _label_txt_path(self, image_path):
+        if self.default_save_dir is not None:
+            stem = ustr(self.annotation_stem(image_path))
+            candidate = stem + TXT_EXT
+            if os.path.isfile(candidate):
+                return candidate
+            basename = os.path.basename(os.path.splitext(image_path)[0])
+            fallback = os.path.join(self.default_save_dir, basename) + TXT_EXT
+            if os.path.isfile(fallback):
+                return fallback
+            return None
+        candidate = os.path.splitext(image_path)[0] + TXT_EXT
+        return candidate if os.path.isfile(candidate) else None
+
+    def _scan_label_file(self, image_path):
+        stats = {'classes': set(), 'count': 0, 'min_conf': None}
+        txt_path = self._label_txt_path(image_path)
+        if not txt_path:
+            return stats
+        try:
+            with open(txt_path, 'r') as f:
+                for line in f:
+                    fields = line.split()
+                    if len(fields) < 5:
+                        continue
+                    stats['count'] += 1
+                    try:
+                        class_idx = int(fields[0])
+                    except ValueError:
+                        continue
+                    if 0 <= class_idx < len(self.label_hist):
+                        stats['classes'].add(self.label_hist[class_idx])
+                    else:
+                        stats['classes'].add(str(class_idx))
+                    if len(fields) >= 6:
+                        try:
+                            conf = float(fields[5])
+                        except ValueError:
+                            continue
+                        if stats['min_conf'] is None or conf < stats['min_conf']:
+                            stats['min_conf'] = conf
+        except OSError:
+            pass
+        return stats
+
+    def _build_label_cache(self):
+        self.m_img_cache = {p: self._scan_label_file(p) for p in self.m_img_full_list}
+        self._refresh_filter_class_menu()
+
+    def _refresh_filter_class_menu(self):
+        prev_checked = {a.text() for a in self.filter_class_menu.actions() if a.isChecked()}
+        classes = set()
+        for stats in self.m_img_cache.values():
+            classes |= stats['classes']
+        self.filter_class_menu.clear()
+        for cls in sorted(classes):
+            act = self.filter_class_menu.addAction(cls)
+            act.setCheckable(True)
+            if cls in prev_checked:
+                act.setChecked(True)
+            act.toggled.connect(self._on_class_filter_changed)
+        self._update_class_button_label()
+
+    def _update_class_button_label(self):
+        n = sum(1 for a in self.filter_class_menu.actions() if a.isChecked())
+        self.filter_class_button.setText('All classes' if n == 0 else '%d class%s' % (n, '' if n == 1 else 'es'))
+
+    def _on_class_filter_changed(self, _checked=False):
+        self._update_class_button_label()
+        self.rebuild_file_list()
+
+    def _passes_filter(self, image_path):
+        name_q = self.filter_name_edit.text().strip().lower()
+        if name_q and name_q not in os.path.basename(image_path).lower():
+            return False
+        stats = self.m_img_cache.get(image_path, {'classes': set(), 'count': 0, 'min_conf': None})
+        if stats['count'] < self.filter_count_min.value() or stats['count'] > self.filter_count_max.value():
+            return False
+        selected = {a.text() for a in self.filter_class_menu.actions() if a.isChecked()}
+        if selected and not (selected & stats['classes']):
+            return False
+        if self.filter_conf_check.isChecked():
+            thr = self.filter_conf_value.value()
+            if stats['min_conf'] is None or stats['min_conf'] >= thr:
+                return False
+        return True
+
+    def rebuild_file_list(self):
+        if self._rebuild_blocked:
+            return
+        old_current = self.file_path
+        self.m_img_list = [p for p in self.m_img_full_list if self._passes_filter(p)]
+        self.img_count = len(self.m_img_list)
+        self.file_list_widget.clear()
+        for p in self.m_img_list:
+            self.file_list_widget.addItem(QListWidgetItem(p))
+        self.filter_stats_label.setText('%d / %d' % (len(self.m_img_list), len(self.m_img_full_list)))
+        if old_current and old_current in self.m_img_list:
+            self.cur_img_idx = self.m_img_list.index(old_current)
+            self.file_list_widget.item(self.cur_img_idx).setSelected(True)
+        elif self.m_img_list:
+            self.cur_img_idx = min(self.cur_img_idx, len(self.m_img_list) - 1)
+        else:
+            self.cur_img_idx = 0
+
+    def clear_filters(self):
+        self._rebuild_blocked = True
+        try:
+            self.filter_name_edit.clear()
+            self.filter_count_min.setValue(0)
+            self.filter_count_max.setValue(9999)
+            self.filter_conf_check.setChecked(False)
+            for act in self.filter_class_menu.actions():
+                act.setChecked(False)
+            self._update_class_button_label()
+        finally:
+            self._rebuild_blocked = False
+        self.rebuild_file_list()
 
     # Add chris
     def button_state(self, item=None):
@@ -902,7 +1085,8 @@ class MainWindow(QMainWindow, WindowMixin):
                 if annotation_file_path[-4:].lower() != ".txt":
                     annotation_file_path += TXT_EXT
                 self.label_file.save_yolo_format(annotation_file_path, shapes, self.file_path, self.image_data, self.label_hist,
-                                                 self.line_color.getRgb(), self.fill_color.getRgb())
+                                                 self.line_color.getRgb(), self.fill_color.getRgb(),
+                                                 classes_file=getattr(self, 'classes_file_path', None))
             elif self.label_file_format == LabelFileFormat.CREATE_ML:
                 if annotation_file_path[-5:].lower() != ".json":
                     annotation_file_path += JSON_EXT
@@ -918,7 +1102,10 @@ class MainWindow(QMainWindow, WindowMixin):
             return False
 
     def copy_selected_shape(self):
-        self.add_label(self.canvas.copy_selected_shape())
+        shape = self.canvas.copy_selected_shape()
+        if shape is None:
+            return
+        self.add_label(shape)
         # fix copy and delete
         self.shape_selection_changed(True)
 
@@ -933,7 +1120,9 @@ class MainWindow(QMainWindow, WindowMixin):
                 self.label_list.item(i).setCheckState(2)
 
     def default_label_combo_selection_changed(self, index):
-        self.default_label=self.label_hist[index]
+        # index is -1 when the combo box is cleared (e.g. Open Dir with no classes.txt)
+        if 0 <= index < len(self.label_hist):
+            self.default_label = self.label_hist[index]
 
     def label_selection_changed(self):
         item = self.current_item()
@@ -1112,6 +1301,8 @@ class MainWindow(QMainWindow, WindowMixin):
             else:
                 self.file_list_widget.clear()
                 self.m_img_list.clear()
+                self.m_img_full_list.clear()
+                self.m_img_cache.clear()
 
         if unicode_file_path and os.path.exists(unicode_file_path):
             if LabelFile.is_label_file(unicode_file_path):
@@ -1177,22 +1368,42 @@ class MainWindow(QMainWindow, WindowMixin):
         """
         return '[{} / {}]'.format(self.cur_img_idx + 1, self.img_count)
 
+    def annotation_stem(self, image_path):
+        """Annotation path (without extension) for an image under default_save_dir.
+
+        The image's sub-folder (relative to the opened image dir) is mirrored, so
+        images/x/1.jpg -> labels/x/1 and same-named images in different sub-folders
+        don't share one label file.
+        """
+        stem = os.path.splitext(os.path.basename(image_path))[0]
+        sub_dir = ''
+        if self.dir_name:
+            rel = os.path.relpath(os.path.dirname(os.path.abspath(image_path)), os.path.abspath(self.dir_name))
+            if rel != os.curdir and not rel.startswith(os.pardir):
+                sub_dir = rel
+        return os.path.join(self.default_save_dir, sub_dir, stem)
+
     def show_bounding_box_from_annotation_file(self, file_path):
         if self.default_save_dir is not None:
+            # Mirrored path first, then the old flat layout (save_dir/<basename>) for existing datasets
             basename = os.path.basename(os.path.splitext(file_path)[0])
-            xml_path = os.path.join(self.default_save_dir, basename + XML_EXT)
-            txt_path = os.path.join(self.default_save_dir, basename + TXT_EXT)
-            json_path = os.path.join(self.default_save_dir, basename + JSON_EXT)
+            for stem in (self.annotation_stem(file_path), os.path.join(self.default_save_dir, basename)):
+                xml_path = stem + XML_EXT
+                txt_path = stem + TXT_EXT
+                json_path = stem + JSON_EXT
 
-            """Annotation file priority:
-            PascalXML > YOLO
-            """
-            if os.path.isfile(xml_path):
-                self.load_pascal_xml_by_filename(xml_path)
-            elif os.path.isfile(txt_path):
-                self.load_yolo_txt_by_filename(txt_path)
-            elif os.path.isfile(json_path):
-                self.load_create_ml_json_by_filename(json_path, file_path)
+                """Annotation file priority:
+                PascalXML > YOLO
+                """
+                if os.path.isfile(xml_path):
+                    self.load_pascal_xml_by_filename(xml_path)
+                    break
+                elif os.path.isfile(txt_path):
+                    self.load_yolo_txt_by_filename(txt_path)
+                    break
+                elif os.path.isfile(json_path):
+                    self.load_create_ml_json_by_filename(json_path, file_path)
+                    break
 
         else:
             xml_path = os.path.splitext(file_path)[0] + XML_EXT
@@ -1307,6 +1518,9 @@ class MainWindow(QMainWindow, WindowMixin):
             self.default_save_dir = dir_path
 
         self.show_bounding_box_from_annotation_file(self.file_path)
+        if self.m_img_full_list:
+            self._build_label_cache()
+            self.rebuild_file_list()
 
         self.statusBar().showMessage('%s . Annotation will be saved to %s' %
                                      ('Change saved folder', self.default_save_dir))
@@ -1344,8 +1558,9 @@ class MainWindow(QMainWindow, WindowMixin):
         if not self.may_continue():
             return
 
-        default_open_dir_path = dir_path if dir_path else '.'
-        if self.last_open_dir and os.path.exists(self.last_open_dir):
+        if dir_path:
+            default_open_dir_path = dir_path
+        elif self.last_open_dir and os.path.exists(self.last_open_dir):
             default_open_dir_path = self.last_open_dir
         else:
             default_open_dir_path = os.path.dirname(self.file_path) if self.file_path else '.'
@@ -1355,9 +1570,41 @@ class MainWindow(QMainWindow, WindowMixin):
                                                                     QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks))
         else:
             target_dir_path = ustr(default_open_dir_path)
+
+        if not target_dir_path:
+            return
+
+        # Support dataset layout: dataset_dir/{images,labels,classes.txt}
+        images_subdir = os.path.join(target_dir_path, 'images')
+        labels_subdir = os.path.join(target_dir_path, 'labels')
+        classes_file = os.path.join(target_dir_path, 'classes.txt')
+
+        if os.path.isdir(images_subdir):
+            import_path = images_subdir
+            self.default_save_dir = labels_subdir
+            os.makedirs(labels_subdir, exist_ok=True)
+            legacy_classes_file = os.path.join(labels_subdir, 'classes.txt')
+        else:
+            import_path = target_dir_path
+            self.default_save_dir = target_dir_path
+            legacy_classes_file = None
+        # Always target the dataset root, even before classes.txt exists, so saves don't create labels/classes.txt
+        self.classes_file_path = classes_file
+
+        # Seed the class list from the existing classes.txt so YOLO saves keep its order;
+        # starting from an empty list would rewrite classes.txt and shift other files' class ids.
+        # Priority: dataset classes.txt > old labels/classes.txt > data/predefined_classes.txt
+        self.label_hist = []
+        for path in (classes_file, legacy_classes_file, self.predefined_classes_file):
+            if path and os.path.isfile(path):
+                self.load_predefined_classes(path)
+                break
+        self.default_label_combo_box.cb.clear()
+        self.default_label_combo_box.cb.addItems(self.label_hist)
+        self.default_label = self.label_hist[0] if self.label_hist else ''
+
         self.last_open_dir = target_dir_path
-        self.import_dir_images(target_dir_path)
-        self.default_save_dir = target_dir_path
+        self.import_dir_images(import_path)
         if self.file_path:
             self.show_bounding_box_from_annotation_file(file_path=self.file_path)
 
@@ -1369,12 +1616,10 @@ class MainWindow(QMainWindow, WindowMixin):
         self.dir_name = dir_path
         self.file_path = None
         self.file_list_widget.clear()
-        self.m_img_list = self.scan_all_images(dir_path)
-        self.img_count = len(self.m_img_list)
+        self.m_img_full_list = self.scan_all_images(dir_path)
+        self._build_label_cache()
+        self.rebuild_file_list()
         self.open_next_image()
-        for imgPath in self.m_img_list:
-            item = QListWidgetItem(imgPath)
-            self.file_list_widget.addItem(item)
 
     def verify_image(self, _value=False):
         # Proceeding next image without dialog if having any label
@@ -1403,8 +1648,7 @@ class MainWindow(QMainWindow, WindowMixin):
             else:
                 self.change_save_dir_dialog()
                 return
-
-        if not self.may_continue():
+        elif not self.may_continue():
             return
 
         if self.img_count <= 0:
@@ -1428,8 +1672,7 @@ class MainWindow(QMainWindow, WindowMixin):
             else:
                 self.change_save_dir_dialog()
                 return
-
-        if not self.may_continue():
+        elif not self.may_continue():
             return
 
         if self.img_count <= 0:
@@ -1467,9 +1710,8 @@ class MainWindow(QMainWindow, WindowMixin):
     def save_file(self, _value=False):
         if self.default_save_dir is not None and len(ustr(self.default_save_dir)):
             if self.file_path:
-                image_file_name = os.path.basename(self.file_path)
-                saved_file_name = os.path.splitext(image_file_name)[0]
-                saved_path = os.path.join(ustr(self.default_save_dir), saved_file_name)
+                saved_path = ustr(self.annotation_stem(self.file_path))
+                os.makedirs(os.path.dirname(saved_path), exist_ok=True)
                 self._save_file(saved_path)
         else:
             image_file_dir = os.path.dirname(self.file_path)
@@ -1506,6 +1748,10 @@ class MainWindow(QMainWindow, WindowMixin):
             self.set_clean()
             self.statusBar().showMessage('Saved to  %s' % annotation_file_path)
             self.statusBar().show()
+            if self.file_path and self.file_path in self.m_img_cache:
+                self.m_img_cache[self.file_path] = self._scan_label_file(self.file_path)
+                self._refresh_filter_class_menu()
+                self.rebuild_file_list()
 
     def close_file(self, _value=False):
         if not self.may_continue():
@@ -1519,10 +1765,26 @@ class MainWindow(QMainWindow, WindowMixin):
     def delete_image(self):
         delete_path = self.file_path
         if delete_path is not None:
+            # Annotation files belonging to this image, so they don't linger after the image is gone
+            stems = [os.path.splitext(delete_path)[0]]
+            if self.default_save_dir:
+                stems.append(self.annotation_stem(delete_path))
+            label_paths = sorted({stem + ext for stem in stems for ext in (XML_EXT, TXT_EXT, JSON_EXT)
+                                  if os.path.isfile(stem + ext)})
+            msg = u'Move this image to the Trash?\n\n%s' % delete_path
+            if label_paths:
+                msg += u'\n\nIts annotation file(s) will be moved too:\n' + '\n'.join(label_paths)
+            if QMessageBox.warning(self, u'Delete image', msg,
+                                   QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            if not self.canvas.shapes:
+                self.set_clean()
             idx = self.cur_img_idx
-            if os.path.exists(delete_path):
-                os.remove(delete_path)
-            self.import_dir_images(self.last_open_dir)
+            for path in [delete_path] + label_paths:
+                if os.path.exists(path) and not QFile.moveToTrash(path)[0]:
+                    QMessageBox.critical(self, u'Delete image', u'Could not move to Trash:\n%s' % path)
+                    return
+            self.import_dir_images(self.dir_name)
             if self.img_count > 0:
                 self.cur_img_idx = min(idx, self.img_count - 1)
                 filename = self.m_img_list[self.cur_img_idx]
@@ -1636,9 +1898,11 @@ class MainWindow(QMainWindow, WindowMixin):
             return
 
         self.set_format(FORMAT_YOLO)
-        t_yolo_parse_reader = YoloReader(txt_path, self.image)
+        class_list_path = getattr(self, 'classes_file_path', None)
+        if class_list_path and not os.path.isfile(class_list_path):
+            class_list_path = None  # fall back to classes.txt next to the label file
+        t_yolo_parse_reader = YoloReader(txt_path, self.image, class_list_path)
         shapes = t_yolo_parse_reader.get_shapes()
-        print(shapes)
         self.load_labels(shapes)
         self.canvas.verified = t_yolo_parse_reader.verified
 
@@ -1709,6 +1973,10 @@ def get_main_app(argv=None):
     win = MainWindow(args.image_dir,
                      args.class_file,
                      args.save_dir)
+    # Keep single-key shortcuts working under Chinese (Zhuyin / Pinyin ...) input methods
+    # and holding a / d keep stepping through images at a steady pace
+    win.physical_key_shortcuts = PhysicalKeyShortcuts(win, win.hold_repeat_actions)
+    app.installEventFilter(win.physical_key_shortcuts)
     win.show()
     return app, win
 

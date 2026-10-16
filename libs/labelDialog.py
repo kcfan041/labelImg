@@ -61,7 +61,7 @@ class LabelDialog(QDialog):
         `None` is returned.
         """
         self.edit.setText(text)
-        self.edit.setSelection(0, len(text))
+        self.edit.setCursorPosition(len(text))
         self.edit.setFocus(Qt.PopupFocusReason)
         if move:
             cursor_pos = QCursor.pos()

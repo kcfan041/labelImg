@@ -46,35 +46,25 @@ class YOLOWriter:
 
         return class_index, x_center, y_center, w, h
 
-    def save(self, class_list=[], target_file=None):
-
-        out_file = None  # Update yolo .txt
-        out_class_file = None   # Update class list .txt
+    def save(self, class_list=[], target_file=None, classes_file=None):
 
         if target_file is None:
-            out_file = open(
-            self.filename + TXT_EXT, 'w', encoding=ENCODE_METHOD)
-            classes_file = os.path.join(os.path.dirname(os.path.abspath(self.filename)), "classes.txt")
-            out_class_file = open(classes_file, 'w')
-
-        else:
-            out_file = codecs.open(target_file, 'w', encoding=ENCODE_METHOD)
+            target_file = self.filename + TXT_EXT
+        if classes_file is None:
             classes_file = os.path.join(os.path.dirname(os.path.abspath(target_file)), "classes.txt")
-            out_class_file = open(classes_file, 'w')
 
-
+        # Build all lines before opening (and truncating) either file,
+        # so an error mid-way can't leave an empty classes.txt / label file behind
+        box_lines = []
         for box in self.box_list:
             class_index, x_center, y_center, w, h = self.bnd_box_to_yolo_line(box, class_list)
-            # print (classIndex, x_center, y_center, w, h)
-            out_file.write("%d %.6f %.6f %.6f %.6f\n" % (class_index, x_center, y_center, w, h))
+            box_lines.append("%d %.6f %.6f %.6f %.6f\n" % (class_index, x_center, y_center, w, h))
 
-        # print (classList)
-        # print (out_class_file)
-        for c in class_list:
-            out_class_file.write(c+'\n')
-
-        out_class_file.close()
-        out_file.close()
+        with codecs.open(target_file, 'w', encoding=ENCODE_METHOD) as out_file:
+            out_file.writelines(box_lines)
+        with codecs.open(classes_file, 'w', encoding=ENCODE_METHOD) as out_class_file:
+            for c in class_list:
+                out_class_file.write(c + '\n')
 
 
 
@@ -94,8 +84,11 @@ class YoloReader:
 
         # print (file_path, self.class_list_path)
 
-        classes_file = open(self.class_list_path, 'r')
-        self.classes = classes_file.read().strip('\n').split('\n')
+        # Without classes.txt the labels fall back to their numeric class ids (see yolo_line_to_shape)
+        self.classes = []
+        if os.path.isfile(self.class_list_path):
+            with codecs.open(self.class_list_path, 'r', encoding=ENCODE_METHOD) as classes_file:
+                self.classes = classes_file.read().strip('\n').split('\n')
 
         # print (self.classes)
 
@@ -119,7 +112,11 @@ class YoloReader:
         self.shapes.append((label, points, None, None, difficult))
 
     def yolo_line_to_shape(self, class_index, x_center, y_center, w, h):
-        label = self.classes[int(class_index)]
+        idx = int(class_index)
+        if idx < len(self.classes):
+            label = self.classes[idx]
+        else:
+            label = str(idx)
 
         x_min = max(float(x_center) - float(w) / 2, 0)
         x_max = min(float(x_center) + float(w) / 2, 1)
@@ -136,7 +133,11 @@ class YoloReader:
     def parse_yolo_format(self):
         bnd_box_file = open(self.file_path, 'r')
         for bndBox in bnd_box_file:
-            class_index, x_center, y_center, w, h = bndBox.strip().split(' ')
+            fields = bndBox.split()
+            if len(fields) < 5:
+                continue  # skip blank / malformed lines
+            # Model predictions may carry a 6th confidence column; only the first 5 are used
+            class_index, x_center, y_center, w, h = fields[:5]
             label, x_min, y_min, x_max, y_max = self.yolo_line_to_shape(class_index, x_center, y_center, w, h)
 
             # Caveat: difficult flag is discarded when saved as yolo format.

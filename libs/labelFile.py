@@ -82,7 +82,7 @@ class LabelFile(object):
         return
 
     def save_yolo_format(self, filename, shapes, image_path, image_data, class_list,
-                         line_color=None, fill_color=None, database_src=None):
+                         line_color=None, fill_color=None, database_src=None, classes_file=None):
         img_folder_path = os.path.dirname(image_path)
         img_folder_name = os.path.split(img_folder_path)[-1]
         img_file_name = os.path.basename(image_path)
@@ -108,7 +108,7 @@ class LabelFile(object):
             bnd_box = LabelFile.convert_points_to_bnd_box(points)
             writer.add_bnd_box(bnd_box[0], bnd_box[1], bnd_box[2], bnd_box[3], label, difficult)
 
-        writer.save(target_file=filename, class_list=class_list)
+        writer.save(target_file=filename, class_list=class_list, classes_file=classes_file)
         return
 
     def toggle_verify(self):

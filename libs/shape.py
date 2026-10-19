@@ -36,8 +36,12 @@ class Shape(object):
     point_type = P_ROUND
     point_size = 16
     scale = 1.0
-    label_font_size = 8  # in image pixels (float); see paint()
-    MIN_LABEL_SCREEN_SIZE = 9  # smallest label text on screen, however far zoomed out
+    label_font_size = 8  # unused for drawing now (see paint()); kept for the canvas API
+    # Display labels: text height = this share of the box's height on screen, within the limits
+    # (screen px). So the text grows with the box, e.g. when a small image is zoomed in.
+    LABEL_BOX_RATIO = 0.3
+    MIN_LABEL_SCREEN_SIZE = 13
+    MAX_LABEL_SCREEN_SIZE = 48
 
     def __init__(self, label=None, line_color=None, difficult=False, paint_label=False):
         self.label = label
@@ -66,6 +70,14 @@ class Shape(object):
             # with an object attribute. Currently this
             # is used for drawing the pending line a different color.
             self.line_color = line_color
+
+    def label_screen_size(self):
+        """Pixel size of the Display labels text: LABEL_BOX_RATIO of the box's height on screen,
+        within MIN / MAX_LABEL_SCREEN_SIZE."""
+        ys = [p.y() for p in self.points] or [0]
+        box_screen_h = (max(ys) - min(ys)) * max(self.scale, 1e-6)
+        return int(round(min(max(box_screen_h * self.LABEL_BOX_RATIO, self.MIN_LABEL_SCREEN_SIZE),
+                             self.MAX_LABEL_SCREEN_SIZE)))
 
     def display_text(self):
         """Label as shown to the user: 'AS 0.87' with a confidence, just 'AS' without."""
@@ -128,12 +140,11 @@ class Shape(object):
             if self.paint_label:
                 min_x = sys.maxsize
                 min_y = sys.maxsize
-                # label_font_size is in image pixels (2% of the image). The text is drawn unscaled
-                # at the matching screen size: a tiny font scaled up by the painter (small images
-                # are zoomed in) came out too small with gaps between the letters, and below
-                # 1 pt (images < 50 px) Qt fell back to its default size, scaled up to huge.
+                # Text size follows the box as shown on screen (LABEL_BOX_RATIO of its height).
+                # Drawn unscaled at that screen size: a tiny font scaled up by the painter came out
+                # with gaps between the letters (and sizes < 1 pt fell back to Qt's default).
                 scale = max(self.scale, 1e-6)
-                screen_size = max(float(self.label_font_size) * scale, self.MIN_LABEL_SCREEN_SIZE)
+                screen_size = self.label_screen_size()
                 min_y_label = 1.25 * screen_size / scale
                 for point in self.points:
                     min_x = min(min_x, point.x())
@@ -145,7 +156,7 @@ class Shape(object):
                         min_y += min_y_label
                     pos = painter.transform().map(QPointF(min_x, min_y))
                     font = QFont()
-                    font.setPointSizeF(screen_size)
+                    font.setPixelSize(screen_size)
                     font.setBold(True)
                     painter.save()
                     painter.resetTransform()

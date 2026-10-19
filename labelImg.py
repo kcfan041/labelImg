@@ -54,6 +54,8 @@ from libs.stayOpenMenu import StayOpenMenu
 from libs.shortcutsDialog import ShortcutsDialog, normalize as normalize_key
 
 __appname__ = 'labelImg'
+SORT_BY_NAME = 'Filename'
+SORT_BY_LABELS = 'Labels'
 
 
 class WindowMixin(object):
@@ -270,11 +272,28 @@ class MainWindow(QMainWindow, WindowMixin):
         grid.addWidget(self.filter_conf_check, 3, 0, 1, 2)
         grid.addWidget(self.filter_conf_value, 3, 2, 1, 2)
 
+        # Order of the file list (see sort_image_list). Kept by Clear, remembered in the settings.
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems([SORT_BY_NAME, SORT_BY_LABELS])
+        self.sort_combo.setToolTip('Labels: by the class ids in each label file (0,1 before 0,5),\n'
+                                   'then by filename. Images without boxes come first.\n'
+                                   'With several datasets, each one is sorted on its own.')
+        self.sort_combo.setCurrentText(settings.get(SETTING_SORT_MODE, SORT_BY_NAME))
+        self.sort_combo.currentIndexChanged.connect(lambda _: self.apply_sort_change())
+        self.resort_button = QToolButton()
+        self.resort_button.setText('Re-sort')
+        self.resort_button.setToolTip('Saving doesn\'t move images in the list; sort again with the latest labels')
+        self.resort_button.clicked.connect(lambda _=False: self.resort())
+        self.resort_button.setEnabled(self.sort_combo.currentText() == SORT_BY_LABELS)
+        grid.addWidget(QLabel('Sort:'), 4, 0)
+        grid.addWidget(self.sort_combo, 4, 1, 1, 2)
+        grid.addWidget(self.resort_button, 4, 3)
+
         self.filter_stats_label = QLabel('')
         clear_btn = QPushButton('Clear')
         clear_btn.clicked.connect(self.clear_filters)
-        grid.addWidget(self.filter_stats_label, 4, 0, 1, 3)
-        grid.addWidget(clear_btn, 4, 3)
+        grid.addWidget(self.filter_stats_label, 5, 0, 1, 3)
+        grid.addWidget(clear_btn, 5, 3)
 
         file_list_layout.addWidget(filter_bar)
         file_list_layout.addWidget(self.file_list_widget)
@@ -1190,7 +1209,8 @@ class MainWindow(QMainWindow, WindowMixin):
         return candidate if os.path.isfile(candidate) else None
 
     def _scan_label_file(self, image_path):
-        stats = {'classes': set(), 'count': 0, 'min_conf': None}
+        # ids: every box's class id, sorted (repeats kept), for sorting by labels
+        stats = {'classes': set(), 'count': 0, 'min_conf': None, 'ids': []}
         txt_path = self._label_txt_path(image_path)
         if not txt_path:
             return stats
@@ -1206,6 +1226,7 @@ class MainWindow(QMainWindow, WindowMixin):
                         class_idx = int(fields[0])
                     except ValueError:
                         continue
+                    stats['ids'].append(class_idx)
                     if 0 <= class_idx < len(class_list):
                         stats['classes'].add(class_list[class_idx])
                     else:
@@ -1219,11 +1240,51 @@ class MainWindow(QMainWindow, WindowMixin):
                             stats['min_conf'] = conf
         except OSError:
             pass
+        stats['ids'].sort()
         return stats
 
     def _build_label_cache(self):
         self.m_img_cache = {p: self._scan_label_file(p) for p in self.m_img_full_list}
         self._refresh_filter_class_menu()
+        self.sort_image_list()
+
+    def sort_image_list(self):
+        """Put m_img_full_list (and so the filtered list, a / d and 'nearest match') in the chosen
+        order. By labels: the sorted class ids of each image compared one by one, so [0, 1] <
+        [0, 1, 4] < [0, 5] < [2]; no boxes ([]) first; equal ids by filename. Datasets of a
+        multi-dataset folder stay in their order, each sorted on its own, since the same id can
+        mean different classes there. Only re-run on open / sort change / Re-sort, not on save,
+        so images don't jump around while working through the list."""
+        name_order = getattr(self, 'm_img_name_order', None)
+        if name_order is None or set(name_order) != set(self.m_img_full_list):
+            # Scan order is the filename order (natural sort, datasets in order)
+            self.m_img_name_order = name_order = list(self.m_img_full_list)
+        if self.sort_combo.currentText() != SORT_BY_LABELS:
+            self.m_img_full_list = list(name_order)
+            return
+        dataset_index = dict((d['images'], i) for i, d in enumerate(self.sub_datasets))
+        empty = {'ids': []}
+
+        def key(item):
+            pos, path = item
+            dataset = self.dataset_for(path)
+            return (dataset_index.get(dataset['images'], 0) if dataset else 0,
+                    self.m_img_cache.get(path, empty)['ids'], pos)
+        self.m_img_full_list = [p for _, p in sorted(enumerate(name_order), key=key)]
+
+    def apply_sort_change(self):
+        self.resort_button.setEnabled(self.sort_combo.currentText() == SORT_BY_LABELS)
+        if not self.m_img_full_list:
+            return
+        self.sort_image_list()
+        self.apply_filter_change()
+
+    def resort(self):
+        """Re-sort button: read all label files again (also picks up outside changes), then sort."""
+        if not self.m_img_full_list:
+            return
+        self._build_label_cache()  # also sorts
+        self.apply_filter_change()
 
     def filter_class_actions(self):
         """The checkable class items of the Class filter menu (not All / None)."""
@@ -2094,6 +2155,7 @@ class MainWindow(QMainWindow, WindowMixin):
         settings[SETTING_PAINT_LABEL] = self.display_label_option.isChecked()
         settings[SETTING_DRAW_SQUARE] = self.draw_squares_option.isChecked()
         settings[SETTING_LABEL_FILE_FORMAT] = self.label_file_format
+        settings[SETTING_SORT_MODE] = self.sort_combo.currentText()
         settings.save()
 
     def load_recent(self, filename):
@@ -2311,6 +2373,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.dir_name = dir_path
         self.file_path = None
         self.file_list_widget.clear()
+        self.m_img_name_order = None
         if self.sub_datasets and os.path.abspath(dir_path) == self.multi_root:
             # Only the images/ folders of the datasets, in dataset order
             self.m_img_full_list = []

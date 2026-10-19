@@ -56,6 +56,7 @@ from libs.shortcutsDialog import ShortcutsDialog, normalize as normalize_key
 __appname__ = 'labelImg'
 SORT_BY_NAME = 'Filename'
 SORT_BY_LABELS = 'Labels'
+NEW_BOX_CONFIDENCE = '1.0'  # confidence text written for boxes drawn with Create box
 
 
 class WindowMixin(object):
@@ -1667,6 +1668,8 @@ class MainWindow(QMainWindow, WindowMixin):
             self.record_edit(shapes=self.canvas.shapes[:-1])  # state before the new box
             generate_color = generate_color_by_text(text)
             shape = self.canvas.set_last_label(text, generate_color, generate_color)
+            # Drawn by hand: full confidence (YOLO 6th column). Existing boxes keep theirs.
+            shape.confidence = NEW_BOX_CONFIDENCE
             self.add_label(shape)
             if self.beginner():  # Switch to edit mode.
                 self.canvas.set_editing(True)

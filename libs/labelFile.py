@@ -105,9 +105,10 @@ class LabelFile(object):
             label = shape['label']
             # Add Chris
             difficult = int(shape['difficult'])
-            bnd_box = LabelFile.convert_points_to_bnd_box(points)
+            # YOLO coordinates are relative, 0 is fine (no VOC-style minimum of 1)
+            bnd_box = LabelFile.convert_points_to_bnd_box(points, min_value=0)
             writer.add_bnd_box(bnd_box[0], bnd_box[1], bnd_box[2], bnd_box[3], label, difficult,
-                               shape.get('confidence'))
+                               shape.get('confidence'), shape.get('source_line'))
 
         # classes_file=False: class names unknown, write only the label file
         writer.save(target_file=filename, class_list=class_list, classes_file=classes_file)
@@ -151,7 +152,7 @@ class LabelFile(object):
         return file_suffix == LabelFile.suffix
 
     @staticmethod
-    def convert_points_to_bnd_box(points):
+    def convert_points_to_bnd_box(points, min_value=1):
         x_min = float('inf')
         y_min = float('inf')
         x_max = float('-inf')
@@ -167,10 +168,11 @@ class LabelFile(object):
         # Martin Kersner, 2015/11/12
         # 0-valued coordinates of BB caused an error while
         # training faster-rcnn object detector.
-        if x_min < 1:
-            x_min = 1
+        # (Pascal VOC only: YOLO passes min_value=0)
+        if x_min < min_value:
+            x_min = min_value
 
-        if y_min < 1:
-            y_min = 1
+        if y_min < min_value:
+            y_min = min_value
 
         return int(x_min), int(y_min), int(x_max), int(y_max)

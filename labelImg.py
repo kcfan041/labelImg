@@ -819,7 +819,7 @@ class MainWindow(QMainWindow, WindowMixin):
     def _snapshot(self, shapes=None):
         shapes = self.canvas.shapes if shapes is None else shapes
         return [dict(label=s.label, points=[(p.x(), p.y()) for p in s.points],
-                     confidence=s.confidence, difficult=s.difficult,
+                     confidence=s.confidence, difficult=s.difficult, source=s.source,
                      line_color=s.line_color.getRgb(), fill_color=s.fill_color.getRgb(),
                      visible=self.canvas.visible.get(s, True))
                 for s in shapes]
@@ -882,6 +882,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 shape.close()
                 shape.confidence = d['confidence']
                 shape.difficult = d['difficult']
+                shape.source = d.get('source')
                 shape.line_color = QColor(*d['line_color'])
                 shape.fill_color = QColor(*d['fill_color'])
                 shapes.append(shape)
@@ -1509,16 +1510,22 @@ class MainWindow(QMainWindow, WindowMixin):
             label, points, line_color, fill_color, difficult = shape_data[:5]
             shape = Shape(label=label)
             shape.confidence = shape_data[5] if len(shape_data) > 5 else None
+            any_snapped = False
             for x, y in points:
 
                 # Ensure the labels are within the bounds of the image. If not, fix them.
                 x, y, snapped = self.canvas.snap_point_to_canvas(x, y)
                 if snapped:
                     self.set_dirty()
+                    any_snapped = True
 
                 shape.add_point(QPointF(x, y))
             shape.difficult = difficult
             shape.close()
+            # YOLO: remember the original line, written back as is while the box is unchanged
+            if len(shape_data) > 6 and shape_data[6] and not any_snapped:
+                shape.source = (shape_data[6], label, [(p.x(), p.y()) for p in shape.points],
+                                shape.confidence)
             s.append(shape)
 
             if line_color:
@@ -1560,7 +1567,8 @@ class MainWindow(QMainWindow, WindowMixin):
                         points=[(p.x(), p.y()) for p in s.points],
                         # add chris
                         difficult=s.difficult,
-                        confidence=s.confidence)
+                        confidence=s.confidence,
+                        source_line=s.source_line())
 
         shapes = [format_shape(shape) for shape in self.canvas.shapes]
         # Can add different annotation formats here

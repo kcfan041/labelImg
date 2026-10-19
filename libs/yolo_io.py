@@ -19,11 +19,13 @@ class YOLOWriter:
         self.local_img_path = local_img_path
         self.verified = False
 
-    def add_bnd_box(self, x_min, y_min, x_max, y_max, name, difficult, confidence=None):
+    def add_bnd_box(self, x_min, y_min, x_max, y_max, name, difficult, confidence=None, source_line=None):
         bnd_box = {'xmin': x_min, 'ymin': y_min, 'xmax': x_max, 'ymax': y_max}
         bnd_box['name'] = name
         bnd_box['difficult'] = difficult
         bnd_box['confidence'] = confidence
+        # The box's line as read from the label file, when the box is unchanged since then
+        bnd_box['source_line'] = source_line
         self.box_list.append(bnd_box)
 
     def bnd_box_to_yolo_line(self, box, class_list=[]):
@@ -65,6 +67,12 @@ class YOLOWriter:
         box_lines = []
         for box in self.box_list:
             class_index, x_center, y_center, w, h = self.bnd_box_to_yolo_line(box, class_list)
+            source = box.get('source_line')
+            if source and source.split()[0] == str(class_index):
+                # Unchanged box: its original line, so loading + saving doesn't shift it by the
+                # whole-pixel rounding below (and keeps the number format)
+                box_lines.append(source + "\n")
+                continue
             line = "%d %.6f %.6f %.6f %.6f" % (class_index, x_center, y_center, w, h)
             # Write the model's confidence (6th column) back exactly as it was read
             if box.get('confidence') is not None:
@@ -120,10 +128,10 @@ class YoloReader:
     def get_shapes(self):
         return self.shapes
 
-    def add_shape(self, label, x_min, y_min, x_max, y_max, difficult, confidence=None):
+    def add_shape(self, label, x_min, y_min, x_max, y_max, difficult, confidence=None, source_line=None):
 
         points = [(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
-        self.shapes.append((label, points, None, None, difficult, confidence))
+        self.shapes.append((label, points, None, None, difficult, confidence, source_line))
 
     def yolo_line_to_shape(self, class_index, x_center, y_center, w, h):
         idx = int(class_index)
@@ -163,4 +171,5 @@ class YoloReader:
             label, x_min, y_min, x_max, y_max = self.yolo_line_to_shape(class_index, x_center, y_center, w, h)
 
             # Caveat: difficult flag is discarded when saved as yolo format.
-            self.add_shape(label, x_min, y_min, x_max, y_max, False, confidence)
+            self.add_shape(label, x_min, y_min, x_max, y_max, False, confidence,
+                           source_line=bndBox.rstrip('\r\n'))

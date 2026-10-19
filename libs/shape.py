@@ -48,6 +48,9 @@ class Shape(object):
         self.paint_label = paint_label
         # Model confidence from a YOLO prediction's 6th column, kept as its original text (or None)
         self.confidence = None
+        # (line, label, points, confidence) as read from a YOLO file: saving writes the line back
+        # verbatim while the box still has that label / position / confidence. None = new box.
+        self.source = None
 
         self._highlight_index = None
         self._highlight_mode = self.NEAR_VERTEX
@@ -218,7 +221,18 @@ class Shape(object):
             shape.fill_color = self.fill_color
         shape.difficult = self.difficult
         shape.confidence = self.confidence
+        shape.source = self.source  # a duplicate is moved right away, so it gets a new line anyway
         return shape
+
+    def source_line(self):
+        """The line this box was read from, if the box is still exactly as read, else None."""
+        if self.source is None:
+            return None
+        line, label, points, confidence = self.source
+        if label != self.label or confidence != self.confidence or \
+                [(p.x(), p.y()) for p in self.points] != points:
+            return None
+        return line
 
     def __len__(self):
         return len(self.points)

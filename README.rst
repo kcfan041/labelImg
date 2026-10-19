@@ -8,12 +8,25 @@ LabelImg（IKG 客製版）
 安裝與執行
 ----------
 
-需要 Python 3 和 PyQt5、lxml。
+**雙擊啟動**\ （電腦上要先裝好 Python 3.8 以上）：
+
+- macOS：雙擊 ``Start labelImg.app``。
+- Windows：雙擊 ``Start labelImg.bat``。
+
+第一次啟動時，會自動在程式資料夾裡建立 ``.venv``，並安裝 PyQt5 和 lxml。這一步需要網路，可能要幾分鐘，完成後 labelImg 會自動開啟。之後再開只要幾秒。
+
+注意：
+
+- 啟動時不會開終端機視窗。出錯時會跳出訊息，詳細內容寫在程式資料夾裡的 ``launcher.log``。
+- macOS 從網路下載後第一次開，可能會被系統擋下，要在 ``Start labelImg.app`` 上按右鍵 → 打開，之後就正常了。
+- 要放到 Dock 或桌面時，請用替身（Option + ⌘ 拖曳），不要把 ``.app`` 搬離程式資料夾。
+
+**手動執行**
 
 .. code:: shell
 
     python3 -m venv .venv
-    .venv/bin/pip install pyqt5 lxml
+    .venv/bin/pip install -r requirements.txt
     .venv/bin/pyrcc5 -o libs/resources.py resources.qrc   # 已附在 repo 裡，改過 strings 才需要重跑
     .venv/bin/python labelImg.py
 

@@ -1,0 +1,38 @@
+#!/bin/bash
+# Bundle entry point of "Start labelImg.app": find a Python 3 and run tools/launcher.py, which sets
+# up .venv on the first start and starts labelImg. Errors go to a dialog and launcher.log.
+# Apps started from Finder get a minimal PATH, so the usual install locations are tried directly.
+REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
+LAUNCHER="$REPO/tools/launcher.py"
+LOG="$REPO/launcher.log"
+
+ok() {  # usable: runs and is Python 3.8+
+    [ -x "$1" ] && "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1
+}
+
+candidates=("$REPO/.venv/bin/python3")
+for p in /opt/homebrew/bin/python3 /usr/local/bin/python3 \
+         /Library/Frameworks/Python.framework/Versions/Current/bin/python3 \
+         "$HOME"/.pyenv/shims/python3 \
+         /opt/homebrew/Caskroom/miniforge/base/bin/python3 \
+         "$HOME"/miniforge3/bin/python3 "$HOME"/miniconda3/bin/python3 "$HOME"/anaconda3/bin/python3 \
+         /opt/homebrew/anaconda3/bin/python3 /opt/anaconda3/bin/python3; do
+    candidates+=("$p")
+done
+# Whatever the user's login shell finds (e.g. set up in ~/.zprofile)
+from_shell="$("${SHELL:-/bin/zsh}" -lc 'command -v python3' 2>/dev/null | tail -n 1)"
+[ -n "$from_shell" ] && candidates+=("$from_shell")
+# Apple's python3 only exists with the Command Line Tools; without them it pops up an installer
+xcode-select -p >/dev/null 2>&1 && candidates+=(/usr/bin/python3)
+
+for py in "${candidates[@]}"; do
+    if ok "$py"; then
+        exec "$py" "$LAUNCHER"
+    fi
+done
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] no Python 3.8+ found; tried: ${candidates[*]}" >> "$LOG"
+osascript -e 'display dialog "找不到 Python 3.8 以上的版本。
+
+請到 https://www.python.org/downloads/ 下載安裝，然後再開一次。" with title "labelImg" buttons {"OK"} default button 1' >/dev/null 2>&1
+exit 1

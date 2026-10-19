@@ -2098,7 +2098,8 @@ class MainWindow(QMainWindow, WindowMixin):
         assert not self.image.isNull(), "cannot paint null image"
         self.canvas.scale = 0.01 * self.zoom_widget.value()
         self.canvas.overlay_color = self.light_widget.color()
-        self.canvas.label_font_size = int(0.02 * max(self.image.width(), self.image.height()))
+        # Label text = 2% of the image, so it keeps the same size relative to the image at any zoom
+        self.canvas.label_font_size = 0.02 * max(self.image.width(), self.image.height())
         self.canvas.adjustSize()
         self.canvas.update()
 

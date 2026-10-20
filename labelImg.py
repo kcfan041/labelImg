@@ -52,6 +52,7 @@ from libs.hashableQListWidgetItem import HashableQListWidgetItem
 from libs.physical_shortcuts import PhysicalKeyShortcuts
 from libs.stayOpenMenu import StayOpenMenu
 from libs.shortcutsDialog import ShortcutsDialog, normalize as normalize_key
+from libs.statisticsDialog import StatisticsDialog
 
 __appname__ = 'labelImg'
 SORT_BY_NAME = 'Filename'
@@ -295,6 +296,12 @@ class MainWindow(QMainWindow, WindowMixin):
         clear_btn.clicked.connect(self.clear_filters)
         grid.addWidget(self.filter_stats_label, 5, 0, 1, 3)
         grid.addWidget(clear_btn, 5, 3)
+
+        self.statistics_button = QPushButton('Export Statistics…')
+        self.statistics_button.setToolTip('Count every class in one or more datasets and export an Excel workbook')
+        self.statistics_button.clicked.connect(self.show_statistics)
+        self.statistics_button.setEnabled(False)
+        grid.addWidget(self.statistics_button, 6, 0, 1, 4)
 
         file_list_layout.addWidget(filter_bar)
         file_list_layout.addWidget(self.file_list_widget)
@@ -2377,6 +2384,24 @@ class MainWindow(QMainWindow, WindowMixin):
         self.statusBar().showMessage(message)
         self.statusBar().show()
 
+    def statistics_datasets(self):
+        """Dataset descriptors for the statistics dialog (multi or currently opened single dataset)."""
+        if self.sub_datasets:
+            return self.sub_datasets
+        if self._current_classes is not None:
+            return [self._current_classes]
+        return []
+
+    def show_statistics(self):
+        datasets = self.statistics_datasets()
+        if not datasets:
+            QMessageBox.information(self, 'Export class statistics', 'Open a dataset folder first.')
+            return
+        title = os.path.basename(self.multi_root if self.sub_datasets else datasets[0]['root']) or 'statistics'
+        start_dir = os.path.expanduser('~/Downloads')
+        dialog = StatisticsDialog(title, datasets, start_dir=start_dir, parent=self)
+        dialog.exec_()
+
     def import_dir_images(self, dir_path):
         if not self.may_continue() or not dir_path:
             return
@@ -2395,6 +2420,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.m_img_full_list = self.scan_all_images(dir_path)
         self._build_label_cache()
         self.rebuild_file_list()
+        self.statistics_button.setEnabled(bool(self.statistics_datasets()))
         self.open_next_image()
 
     def verify_image(self, _value=False):

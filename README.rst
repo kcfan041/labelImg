@@ -90,7 +90,7 @@ YOLO 標註的第 6 欄（信心值）會顯示在類別名稱後面，例如 ``
 
   - 單一資料集直接輸出該資料集；大資料夾可用 All / None 或逐一勾選多個資料集。
   - 每個 dataset 在 Excel 裡各自一個區塊，不跨資料集加總；``total`` 是該資料集的總框數，後面各欄依 ``classes.txt`` 顯示。
-  - 輸出版型與品質分析範例相同，保留 ``incorrect``、``accuracy``、``invalid_round_rate``；labelImg 無法從標註單獨判斷這些數值，所以儲存格保持空白，供後續分析填入。
+  - 輸出版型與品質分析範例相同；``incorrect`` 預設全部填 0，``accuracy`` 與數量列的 ``invalid_round_rate`` 因為無法從標註單獨判斷而保持空白，供後續分析填入。
   - 預覽會提示格式錯誤的標註行和超出 ``classes.txt`` 的 class id；Refresh 會重新讀取硬碟上的標註。
   - 輸出檔預設放在 Downloads，檔名為 ``資料夾名稱_日期.xlsx``。不需要另外安裝 Excel 套件。
 - Sort：清單順序，會記住上次的選擇。

@@ -144,11 +144,12 @@ def _worksheet_xml(title, subtitle, results, columns):
                      for i, value in enumerate(values))
         rows.append(_row(row_no, cells))
 
-        # Keep the rows from the reference, but leave every uncomputable value genuinely blank.
+        # Start incorrect at zero like the reference report; downstream analysis may replace it.
         cells = [_cell('A%d' % (row_no + 1), 'incorrect', 8)]
-        cells.extend(_cell('%s%d' % (_column_name(i), row_no + 1), None, 6)
+        cells.extend(_cell('%s%d' % (_column_name(i), row_no + 1), 0, 6, number=True)
                      for i in range(2, 3 + len(report_columns)))
         rows.append(_row(row_no + 1, cells))
+        # Accuracy cannot be derived from labels alone, so it stays genuinely blank.
         cells = [_cell('A%d' % (row_no + 2), 'accuracy', 8)]
         cells.extend(_cell('%s%d' % (_column_name(i), row_no + 2), None, 6)
                      for i in range(2, 3 + len(report_columns)))

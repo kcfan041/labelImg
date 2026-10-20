@@ -14,10 +14,15 @@ import sys
 try:
     from PyQt5.QtCore import QObject, QEvent, Qt, QTimer
     from PyQt5.QtGui import QKeySequence
-    from PyQt5.QtWidgets import QAction, QApplication
+    from PyQt5.QtWidgets import (QAction, QApplication, QAbstractSpinBox, QComboBox, QLineEdit,
+                                 QPlainTextEdit, QTextEdit)
 except ImportError:
     from PyQt4.QtCore import QObject, QEvent, Qt, QTimer
-    from PyQt4.QtGui import QKeySequence, QAction, QApplication
+    from PyQt4.QtGui import (QKeySequence, QAction, QApplication, QAbstractSpinBox, QComboBox,
+                             QLineEdit, QPlainTextEdit, QTextEdit)
+
+_ARROW_KEYS = (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down)
+_TEXT_WIDGETS = (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit)
 
 # macOS kVK_ANSI_* virtual key codes (Carbon HIToolbox/Events.h)
 _MAC_VIRTUAL_KEYS = {
@@ -66,7 +71,13 @@ class PhysicalKeyShortcuts(QObject):
             return False
         if etype not in (QEvent.KeyPress, QEvent.ShortcutOverride):
             return False
+        if QApplication.activeModalWidget() is not None:
+            return False  # dialogs (statistics, shortcuts, label ...) keep their own keys
         focus = QApplication.focusWidget()
+        if self._widget_wants_arrow(focus, event):
+            if etype == QEvent.ShortcutOverride:
+                event.accept()  # e.g. Up in a spin box changes its value instead of the class
+            return False
         if focus is not None and focus.testAttribute(Qt.WA_InputMethodEnabled):
             return False  # typing into a text field (e.g. the label dialog) keeps the input method
 
@@ -101,6 +112,19 @@ class PhysicalKeyShortcuts(QObject):
                 action.trigger()
                 return True
         return False
+
+    @staticmethod
+    def _widget_wants_arrow(focus, event):
+        """Arrow keys are image / class shortcuts, except in widgets that need them:
+        text fields and spin boxes keep all four, combo boxes keep Up / Down."""
+        key = event.key()
+        if focus is None or key not in _ARROW_KEYS:
+            return False
+        if int(event.modifiers() & (_BLOCKING_MODIFIERS | Qt.ShiftModifier)):
+            return False
+        if isinstance(focus, _TEXT_WIDGETS):
+            return True
+        return isinstance(focus, QComboBox) and key in (Qt.Key_Up, Qt.Key_Down)
 
     def stop_hold(self):
         self.repeat_timer.stop()

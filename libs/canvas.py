@@ -676,14 +676,8 @@ class Canvas(QWidget):
             self.update()
         elif key == Qt.Key_Return and self.can_close_shape():
             self.finalise()
-        elif key == Qt.Key_Left and self.selected_shape:
-            self.move_one_pixel('Left')
-        elif key == Qt.Key_Right and self.selected_shape:
-            self.move_one_pixel('Right')
-        elif key == Qt.Key_Up and self.selected_shape:
-            self.move_one_pixel('Up')
-        elif key == Qt.Key_Down and self.selected_shape:
-            self.move_one_pixel('Down')
+        # Arrow keys are window shortcuts now (Left / Right: previous / next image,
+        # Up / Down: previous / next class), so they no longer nudge the selected box.
 
     def cancel_drawing(self):
         """Drop the box being drawn (Esc / Undo while drawing). Returns True if there was one."""

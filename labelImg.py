@@ -369,10 +369,10 @@ class MainWindow(QMainWindow, WindowMixin):
         copy_prev_bounding = action(get_str('copyPrevBounding'), self.copy_previous_bounding_boxes, 'Ctrl+v', 'copy', get_str('copyPrevBounding'))
 
         open_next_image = action(get_str('nextImg'), self.open_next_image,
-                                 'd', 'next', get_str('nextImgDetail'))
+                                 ['d', 'Right'], 'next', get_str('nextImgDetail'))
 
         open_prev_image = action(get_str('prevImg'), self.open_prev_image,
-                                 'a', 'prev', get_str('prevImgDetail'))
+                                 ['a', 'Left'], 'prev', get_str('prevImgDetail'))
         # Holding these keys steps through images (see libs/physical_shortcuts.py)
         self.hold_repeat_actions = [open_next_image, open_prev_image]
 
@@ -422,6 +422,11 @@ class MainWindow(QMainWindow, WindowMixin):
         copy = action(get_str('dupBox'), self.copy_selected_shape,
                       'Ctrl+D', 'copy', get_str('dupBoxDetail'),
                       enabled=False)
+        # Up / Down walk the class list: relabel the selected box, or set the class of new boxes
+        prev_class = action('Previous class', partial(self.step_class, -1), 'Up', None,
+                            'Change the selected box (or the class of new boxes) to the class above')
+        next_class = action('Next class', partial(self.step_class, 1), 'Down', None,
+                            'Change the selected box (or the class of new boxes) to the class below')
         # 'Ctrl' is Cmd on macOS. Not QKeySequence.Redo: on Windows that includes Ctrl+Y,
         # which is already the save-format toggle.
         undo = action('Undo', self.undo_edit, 'Ctrl+Z', 'undo', 'Undo the last box edit on this image',
@@ -537,7 +542,7 @@ class MainWindow(QMainWindow, WindowMixin):
                               fileMenuActions=(
                                   open, open_dir, save, save_as, close, reset_all, quit),
                               beginner=(), advanced=(),
-                              editMenu=(undo, redo, None, edit, copy, delete,
+                              editMenu=(undo, redo, None, edit, prev_class, next_class, copy, delete,
                                         None, color1, self.draw_squares_option),
                               beginnerContext=(create, edit, copy, delete),
                               advancedContext=(create_mode, edit_mode, edit, copy,
@@ -587,6 +592,8 @@ class MainWindow(QMainWindow, WindowMixin):
             ('delete_box', 'Delete box', [delete]),
             ('copy_box', 'Duplicate box', [copy]),
             ('edit_label', 'Edit label (dialog)', [edit]),
+            ('prev_class', 'Previous class', [prev_class]),
+            ('next_class', 'Next class', [next_class]),
             ('undo', 'Undo', [undo]),
             ('redo', 'Redo', [redo]),
             ('verify', 'Verify image', [verify]),
@@ -1195,6 +1202,28 @@ class MainWindow(QMainWindow, WindowMixin):
             self.default_label = name
             self.use_default_label_checkbox.setChecked(True)
         self.highlight_class_list()
+
+    def step_class(self, step, _value=False):
+        """Up / Down: move to the class above / below in the class list (wrapping around)."""
+        if self.canvas.current is not None:
+            return  # don't relabel in the middle of drawing a box
+        rows = self.class_list_rows()
+        if not rows:
+            return
+        shape = self.canvas.selected_shape
+        if shape is not None and self.canvas.editing():
+            name = str(shape.label)
+        elif self.use_default_label_checkbox.isChecked():
+            name = self.default_label
+        else:
+            name = None
+        if name in rows:
+            index = (rows.index(name) + step) % len(rows)
+        else:
+            index = 0 if step > 0 else len(rows) - 1
+        self.refresh_class_list()
+        self.class_list_clicked(self.class_list.item(index))
+        self.status('Class: %s' % rows[index])
 
     # Tzutalin 20160906 : Add file list and dock to move faster
     def file_item_double_clicked(self, item=None):

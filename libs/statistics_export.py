@@ -104,8 +104,11 @@ def _column_name(number):
     return result
 
 
-def _cell(ref, value, style=0, number=False):
+def _cell(ref, value=None, style=0, number=False):
+    """One cell. None means a genuinely blank cell (no v / inline string)."""
     style_attr = ' s="%d"' % style if style else ''
+    if value is None:
+        return '<c r="%s"%s/>' % (ref, style_attr)
     if number:
         return '<c r="%s"%s><v>%d</v></c>' % (ref, style_attr, int(value))
     text = escape(str(value))
@@ -113,34 +116,57 @@ def _cell(ref, value, style=0, number=False):
         ref, style_attr, text)
 
 
+def _row(row_no, cells):
+    return '<row r="%d">%s</row>' % (row_no, ''.join(cells))
+
+
 def _worksheet_xml(title, subtitle, results, columns):
-    last_col = _column_name(2 + len(columns))
+    """Match the supplied roulette workbook: three rows per dataset and one blank separator."""
+    report_columns = list(columns) + ['invalid_round_rate']
+    last_col = _column_name(2 + len(report_columns))
     rows = []
-    rows.append('<row r="1" ht="28" customHeight="1">%s</row>' % _cell('A1', title, 1))
-    rows.append('<row r="2">%s</row>' % _cell('A2', subtitle, 2))
-    headers = ['Dataset', 'total'] + columns
-    rows.append('<row r="4" ht="22" customHeight="1">%s</row>' % ''.join(
-        _cell('%s4' % _column_name(i + 1), text, 3) for i, text in enumerate(headers)))
+    # Reference: styles extend across every title/subtitle column, even though only A has text.
+    rows.append(_row(1, [_cell('%s1' % _column_name(i), title if i == 1 else None, 1)
+                         for i in range(1, 3 + len(report_columns))]))
+    rows.append(_row(2, [_cell('%s2' % _column_name(i), subtitle if i == 1 else None, 2)
+                         for i in range(1, 3 + len(report_columns))]))
+    headers = ['Dataset', 'total'] + report_columns
+    rows.append(_row(4, [_cell('%s4' % _column_name(i + 1), text, 3 if i < 2 else 4)
+                         for i, text in enumerate(headers)]))
     row_no = 5
     for result in results:
-        values = [result['name'], result['total']] + [result['counts'].get(name, 0) for name in columns]
-        cells = [_cell('A%d' % row_no, values[0], 4)]
-        cells.extend(_cell('%s%d' % (_column_name(i + 1), row_no), value, 5, number=True)
-                     for i, value in enumerate(values[1:], 1))
-        rows.append('<row r="%d" ht="20" customHeight="1">%s</row>' % (row_no, ''.join(cells)))
-        row_no += 2  # blank row between datasets, like the reference workbook
+        values = [result['total']] + [result['counts'].get(name, 0) for name in columns]
+        # The final invalid_round_rate has no ground-truth comparison in labelImg -> blank.
+        values.append(None)
+        cells = [_cell('A%d' % row_no, result['name'], 5)]
+        cells.extend(_cell('%s%d' % (_column_name(i + 2), row_no), value,
+                           6 if value in (0, None) else 7, number=value is not None)
+                     for i, value in enumerate(values))
+        rows.append(_row(row_no, cells))
+
+        # Keep the rows from the reference, but leave every uncomputable value genuinely blank.
+        cells = [_cell('A%d' % (row_no + 1), 'incorrect', 8)]
+        cells.extend(_cell('%s%d' % (_column_name(i), row_no + 1), None, 6)
+                     for i in range(2, 3 + len(report_columns)))
+        rows.append(_row(row_no + 1, cells))
+        cells = [_cell('A%d' % (row_no + 2), 'accuracy', 8)]
+        cells.extend(_cell('%s%d' % (_column_name(i), row_no + 2), None, 6)
+                     for i in range(2, 3 + len(report_columns)))
+        rows.append(_row(row_no + 2, cells))
+        row_no += 4
+
     widths = ['<col min="1" max="1" width="30" customWidth="1"/>',
               '<col min="2" max="2" width="12" customWidth="1"/>']
     if columns:
-        widths.append('<col min="3" max="%d" width="12" customWidth="1"/>' % (2 + len(columns)))
+        widths.append('<col min="3" max="%d" width="16" customWidth="1"/>' % (2 + len(columns)))
+    widths.append('<col min="%d" max="%d" width="20" customWidth="1"/>' %
+                  (2 + len(report_columns), 2 + len(report_columns)))
     dimension = 'A1:%s%d' % (last_col, max(row_no - 2, 4))
     return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-            '<dimension ref="%s"/><sheetViews><sheetView workbookViewId="0">'
-            '<pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/>'
-            '</sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/>'
-            '<cols>%s</cols><sheetData>%s</sheetData><autoFilter ref="A4:%s4"/>'
-            '</worksheet>') % (dimension, ''.join(widths), ''.join(rows), last_col)
+            '<dimension ref="%s"/><sheetViews><sheetView workbookViewId="0"/></sheetViews>'
+            '<sheetFormatPr defaultRowHeight="15"/><cols>%s</cols><sheetData>%s</sheetData>'
+            '</worksheet>') % (dimension, ''.join(widths), ''.join(rows))
 
 
 def write_xlsx(path, title, results, exported=None):
@@ -160,7 +186,7 @@ def write_xlsx(path, title, results, exported=None):
         'xl/workbook.xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name=%s sheetId="1" r:id="rId1"/></sheets></workbook>' % quoteattr(sheet_name),
         'xl/_rels/workbook.xml.rels': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>''',
         'xl/worksheets/sheet1.xml': worksheet,
-        'xl/styles.xml': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="11"/><name val="Arial"/></font><font><b/><sz val="18"/><color rgb="FFFFFFFF"/><name val="Arial"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Arial"/></font></fonts><fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF5B9BD5"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFD9E2F3"/></left><right style="thin"><color rgb="FFD9E2F3"/></right><top style="thin"><color rgb="FFD9E2F3"/></top><bottom style="thin"><color rgb="FFD9E2F3"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"><alignment horizontal="left"/></xf><xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"><alignment horizontal="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"><alignment horizontal="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>''',
+        'xl/styles.xml': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="8"><font><color theme="1"/><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFE6EDF7"/><sz val="18"/></font><font><color rgb="FF9BA9C3"/><sz val="11"/></font><font><b/><color rgb="FF25344D"/><sz val="11"/></font><font><b/><color rgb="FF1B2940"/><sz val="11"/></font><font><color rgb="FF0D1626"/><sz val="11"/></font><font><b/><color rgb="FF20C25A"/><sz val="11"/></font><font><color rgb="FF5A6A8A"/><sz val="11"/></font></fonts><fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF0F6FF"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFD9E5F5"/></patternFill></fill></fills><borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"/><right style="thin"/><top style="thin"/><bottom style="thin"/><diagonal/></border><border><left style="thin"><color rgb="FFCCCCCC"/></left><right style="thin"><color rgb="FFCCCCCC"/></right><top style="thin"><color rgb="FFCCCCCC"/></top><bottom style="thin"><color rgb="FFCCCCCC"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="9"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"><alignment horizontal="left" vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"><alignment horizontal="left" vertical="center"/></xf><xf numFmtId="0" fontId="3" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"><alignment horizontal="left" vertical="center" indent="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="6" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="7" fillId="0" borderId="0" xfId="0" applyFont="1"><alignment horizontal="right" vertical="center" indent="3"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>''',
     }
     parent = os.path.dirname(os.path.abspath(path))
     if parent and not os.path.isdir(parent):

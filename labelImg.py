@@ -427,6 +427,8 @@ class MainWindow(QMainWindow, WindowMixin):
                             'Change the selected box (or the class of new boxes) to the class above')
         next_class = action('Next class', partial(self.step_class, 1), ['s', 'Down'], None,
                             'Change the selected box (or the class of new boxes) to the class below')
+        # Holding W / S (or Up / Down) keeps stepping through the classes, paced like a / d
+        self.hold_repeat_actions += [prev_class, next_class]
         # 'Ctrl' is Cmd on macOS. Not QKeySequence.Redo: on Windows that includes Ctrl+Y,
         # which is already the save-format toggle.
         undo = action('Undo', self.undo_edit, 'Ctrl+Z', 'undo', 'Undo the last box edit on this image',
@@ -1130,11 +1132,11 @@ class MainWindow(QMainWindow, WindowMixin):
         if text is not None and self.check_label_allowed(text):
             self.set_shape_label(shape, text)
 
-    def set_shape_label(self, shape, text):
-        """Change one box's class (undoable)."""
+    def set_shape_label(self, shape, text, undo_kind=None):
+        """Change one box's class (undoable). Changes with the same undo_kind are one undo step."""
         if text == shape.label:
             return
-        self.record_edit()
+        self.record_edit(undo_kind)
         shape.label = text
         shape.line_color = generate_color_by_text(text)
         item = self.shapes_to_items[shape]
@@ -1189,12 +1191,12 @@ class MainWindow(QMainWindow, WindowMixin):
             self.class_list.clearSelection()
         self.class_list.blockSignals(False)
 
-    def class_list_clicked(self, item):
+    def class_list_clicked(self, item, undo_kind=None):
         name = item.data(Qt.UserRole)
         shape = self.canvas.selected_shape
         if shape is not None and self.canvas.editing():
             if self.check_label_allowed(name):
-                self.set_shape_label(shape, name)
+                self.set_shape_label(shape, name, undo_kind)
         else:
             # No box selected: this becomes the class of the next boxes, without the dialog
             if name in self.label_hist:
@@ -1204,7 +1206,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.highlight_class_list()
 
     def step_class(self, step, _value=False):
-        """Up / Down: move to the class above / below in the class list (wrapping around)."""
+        """W / S, Up / Down: move to the class above / below in the class list (wrapping around).
+        Holding the key repeats it; all the changes of one hold are a single undo step."""
         if self.canvas.current is not None:
             return  # don't relabel in the middle of drawing a box
         rows = self.class_list_rows()
@@ -1221,8 +1224,12 @@ class MainWindow(QMainWindow, WindowMixin):
             index = (rows.index(name) + step) % len(rows)
         else:
             index = 0 if step > 0 else len(rows) - 1
+        undo_kind = None
+        keys = getattr(self, 'physical_key_shortcuts', None)
+        if keys is not None and keys.held_action is not None and shape is not None:
+            undo_kind = 'class-hold-%d-%d' % (keys.press_id, id(shape))
         self.refresh_class_list()
-        self.class_list_clicked(self.class_list.item(index))
+        self.class_list_clicked(self.class_list.item(index), undo_kind)
         self.status('Class: %s' % rows[index])
 
     # Tzutalin 20160906 : Add file list and dock to move faster

@@ -41,7 +41,7 @@ _MAC_VIRTUAL_KEYS = {
 _BLOCKING_MODIFIERS = Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier
 
 
-# Holding a key bound to a hold-repeat action (next / prev image): fire once on press,
+# Holding a key bound to a hold-repeat action (next / prev image, prev / next class): fire once on press,
 # then after HOLD_DELAY_MS keep firing every REPEAT_INTERVAL_MS until the key is released
 HOLD_DELAY_MS = 400
 REPEAT_INTERVAL_MS = 150
@@ -57,6 +57,7 @@ class PhysicalKeyShortcuts(QObject):
             action.setAutoRepeat(False)  # repeating is paced by repeat_timer instead of the OS key repeat
         self.held_action = None
         self.held_key = None
+        self.press_id = 0  # increases on every new press, so the window can tell holds apart
         self.repeat_timer = QTimer(self)
         self.repeat_timer.timeout.connect(self._repeat_held_action)
 
@@ -90,6 +91,7 @@ class PhysicalKeyShortcuts(QObject):
             if not event.isAutoRepeat() and hold_action is not self.held_action:
                 self.held_action = hold_action
                 self.held_key = self._key(event)
+                self.press_id += 1
                 hold_action.trigger()
                 self.repeat_timer.start(HOLD_DELAY_MS)
             return True  # swallow the OS auto-repeat presses

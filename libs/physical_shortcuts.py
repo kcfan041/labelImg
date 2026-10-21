@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf8 -*-
-"""Make single-key shortcuts (w / a / d / x / space ...) work while a non-Latin
+"""Make single-key shortcuts (e / w / s / a / d / x / space ...) work while a non-Latin
 input method such as Zhuyin or Pinyin is active.
 
 With such an input source the key event no longer carries the Latin letter
@@ -107,7 +107,7 @@ class PhysicalKeyShortcuts(QObject):
         sequence = QKeySequence(int(event.modifiers() & Qt.ShiftModifier) | key)
         for action in self.window.findChildren(QAction):
             # Like Qt, ignore actions not placed on any toolbar/menu (e.g. the advanced-mode
-            # "Create RectBox" that also uses 'w' while in beginner mode)
+            # "Create RectBox" that also uses 'e' while in beginner mode)
             if action.isEnabled() and action.associatedWidgets() and sequence in action.shortcuts():
                 action.trigger()
                 return True

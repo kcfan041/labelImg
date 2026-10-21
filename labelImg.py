@@ -166,7 +166,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.class_list.setToolTip('Click: set the selected box to this class.\n'
                                    'With no box selected: new boxes get this class.')
         self.class_list.itemClicked.connect(self.class_list_clicked)
-        self.class_list.setFocusPolicy(Qt.NoFocus)  # keep keys (a / d / w ...) on the canvas
+        self.class_list.setFocusPolicy(Qt.NoFocus)  # keep keys (a / d / w / s / e ...) on the canvas
         self.use_default_label_checkbox.toggled.connect(lambda _: self.highlight_class_list())
 
         # Quick on/off for what's drawn on the image (boxes, and the class text above them)
@@ -411,21 +411,21 @@ class MainWindow(QMainWindow, WindowMixin):
                         'Ctrl+L', 'color_line', get_str('boxLineColorDetail'))
 
         create_mode = action(get_str('crtBox'), self.set_create_mode,
-                             'w', 'new', get_str('crtBoxDetail'), enabled=False)
+                             'e', 'new', get_str('crtBoxDetail'), enabled=False)
         edit_mode = action(get_str('editBox'), self.set_edit_mode,
                            'Ctrl+J', 'edit', get_str('editBoxDetail'), enabled=False)
 
         create = action(get_str('crtBox'), self.create_shape,
-                        'w', 'new', get_str('crtBoxDetail'), enabled=False)
+                        'e', 'new', get_str('crtBoxDetail'), enabled=False)
         delete = action(get_str('delBox'), self.delete_selected_shape,
                         ['x', 'Delete', 'Backspace'], 'delete', get_str('delBoxDetail'), enabled=False)
         copy = action(get_str('dupBox'), self.copy_selected_shape,
                       'Ctrl+D', 'copy', get_str('dupBoxDetail'),
                       enabled=False)
-        # Up / Down walk the class list: relabel the selected box, or set the class of new boxes
-        prev_class = action('Previous class', partial(self.step_class, -1), 'Up', None,
+        # W / S and Up / Down walk the class list: relabel the selected box, or set the class of new boxes
+        prev_class = action('Previous class', partial(self.step_class, -1), ['w', 'Up'], None,
                             'Change the selected box (or the class of new boxes) to the class above')
-        next_class = action('Next class', partial(self.step_class, 1), 'Down', None,
+        next_class = action('Next class', partial(self.step_class, 1), ['s', 'Down'], None,
                             'Change the selected box (or the class of new boxes) to the class below')
         # 'Ctrl' is Cmd on macOS. Not QKeySequence.Redo: on Windows that includes Ctrl+Y,
         # which is already the save-format toggle.
@@ -580,7 +580,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.show_label_text_checkbox.toggled.connect(self.set_paint_labels)
 
         # Keyboard shortcut editor. Ids are stable so saved settings survive text changes;
-        # actions sharing an id (the beginner / advanced 'w') always get the same keys.
+        # actions sharing an id (the beginner / advanced 'e') always get the same keys.
         edit_shortcuts = action('Keyboard Shortcuts…', self.edit_shortcuts, 'Ctrl+,', 'help',
                                 'Change the keyboard shortcuts')
         edit_shortcuts.setMenuRole(QAction.NoRole)  # stay in the menu on macOS
